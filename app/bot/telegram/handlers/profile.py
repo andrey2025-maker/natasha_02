@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import escape
+
 from aiogram import F, Router
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.exceptions import TelegramForbiddenError
@@ -311,9 +313,14 @@ async def _forward_idle_message_to_questions_topic(
     if profile:
         profile_hint = f"{profile.code} / {profile.name or 'без имени'}"
     body = (message.text or message.caption or "").strip()
-    text = "📩 <b>Вопрос от клиента</b>\n" f"Профиль: <b>{profile_hint}</b>\n" f"TG ID: <code>{message.from_user.id}</code>\n\n"
+    safe_profile_hint = escape(profile_hint, quote=False)
+    text = (
+        "📩 <b>Вопрос от клиента</b>\n"
+        f"Профиль: <b>{safe_profile_hint}</b>\n"
+        f"TG ID: <code>{message.from_user.id}</code>\n\n"
+    )
     if body:
-        text += body
+        text += escape(body, quote=False)
     else:
         text += "Медиа-сообщение клиента ниже."
     try:

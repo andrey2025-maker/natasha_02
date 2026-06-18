@@ -277,7 +277,7 @@ class BuyoutFlowService:
         aliases = ", ".join(sorted({item for labels in _FILTER_ALIASES.values() for item in labels if len(item) <= 6}))
         return (
             f"{summary}\n"
-            "Для VK: используйте команду `фильтр <статус>`.\n"
+            "Для VK: используйте команду `фильтр &lt;статус&gt;`.\n"
             f"Примеры статусов: {aliases}\n"
             "Сброс: `фильтр все`."
         )

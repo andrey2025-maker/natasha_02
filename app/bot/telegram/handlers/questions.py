@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import escape
+
 from aiogram import F, Router
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.exceptions import TelegramForbiddenError
@@ -202,9 +204,9 @@ async def _send_section(
     children = await container.faq_service.list_children(section_id)
     path_text = await container.faq_service.breadcrumbs(section_id)
 
-    body_lines = [f"<b>{path_text}</b>"]
+    body_lines = [f"<b>{escape(path_text, quote=False)}</b>"]
     if current and current.content_text:
-        body_lines.append(current.content_text)
+        body_lines.append(escape(current.content_text, quote=False))
     if children:
         body_lines.append("")
         body_lines.append("Выберите раздел:")

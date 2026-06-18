@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import escape
+
 from app.domain.models import UserProfile
 
 
@@ -25,10 +27,10 @@ def profile_intro() -> str:
 def profile_summary(profile: UserProfile) -> str:
     return (
         "🪪 <b>Ваш профиль</b>\n\n"
-        f"👤 <b>Имя:</b> {profile.name}\n"
-        f"🔢 <b>Код:</b> {profile.code}\n"
-        f"📞 <b>Тел:</b> {profile.phone}\n"
-        f"🏙 <b>Город:</b> {profile.city}\n"
+        f"👤 <b>Имя:</b> {_h(profile.name)}\n"
+        f"🔢 <b>Код:</b> {_h(profile.code)}\n"
+        f"📞 <b>Тел:</b> {_h(profile.phone)}\n"
+        f"🏙 <b>Город:</b> {_h(profile.city)}\n"
         f"🛂 <b>Загран паспорт:</b> {'Да' if profile.has_passport else 'Нет'}"
     )
 
@@ -38,13 +40,13 @@ def ask_name() -> str:
 
 
 def ask_phone(name: str) -> str:
-    return f"✅ Ваше имя: <b>{name}</b>\n\n📞 Напишите ваш <b>номер телефона</b>:"
+    return f"✅ Ваше имя: <b>{_h(name)}</b>\n\n📞 Напишите ваш <b>номер телефона</b>:"
 
 
 def ask_city(name: str, phone: str) -> str:
     return (
-        f"👤 Имя: <b>{name}</b>\n"
-        f"📞 Телефон: <b>{phone}</b>\n\n"
+        f"👤 Имя: <b>{_h(name)}</b>\n"
+        f"📞 Телефон: <b>{_h(phone)}</b>\n\n"
         "🏙 Напишите ваш <b>город</b> получения:"
     )
 
@@ -52,9 +54,9 @@ def ask_city(name: str, phone: str) -> str:
 def confirm_profile(name: str, phone: str, city: str) -> str:
     return (
         "🔎 <b>Проверьте данные</b>\n\n"
-        f"👤 Имя: <b>{name}</b>\n"
-        f"📞 Тел: <b>{phone}</b>\n"
-        f"🏙 Город: <b>{city}</b>\n\n"
+        f"👤 Имя: <b>{_h(name)}</b>\n"
+        f"📞 Тел: <b>{_h(phone)}</b>\n"
+        f"🏙 Город: <b>{_h(city)}</b>\n\n"
         "Всё верно?"
     )
 
@@ -68,12 +70,12 @@ def enter_existing_code() -> str:
 
 
 def confirm_code(code: str) -> str:
-    return f"✅ Код <b>{code}</b> указан правильно?"
+    return f"✅ Код <b>{_h(code)}</b> указан правильно?"
 
 
 def ask_passport(code: str) -> str:
     return (
-        f"🔐 Ваш код: <b>{code}</b>\n\n"
+        f"🔐 Ваш код: <b>{_h(code)}</b>\n\n"
         "🛂 Есть ли у вас загранпаспорт?\n"
         "Он нужен для таможенного оформления посылок."
     )
@@ -147,22 +149,28 @@ def sync_code_expired() -> str:
 def sync_done(profile: UserProfile) -> str:
     return (
         "🎉 Профили успешно синхронизированы.\n\n"
-        f"👤 <b>Имя:</b> {profile.name}\n"
-        f"🔢 <b>Код:</b> {profile.code}\n"
-        f"📞 <b>Тел:</b> {profile.phone}\n"
-        f"🏙 <b>Город:</b> {profile.city}"
+        f"👤 <b>Имя:</b> {_h(profile.name)}\n"
+        f"🔢 <b>Код:</b> {_h(profile.code)}\n"
+        f"📞 <b>Тел:</b> {_h(profile.phone)}\n"
+        f"🏙 <b>Город:</b> {_h(profile.city)}"
     )
 
 
 def sync_code_for_other_platform(code: str, profile_code: str, from_platform: str) -> str:
     return (
         "🔔 Запрос на привязку профиля.\n"
-        f"🧭 Платформа-инициатор: <b>{from_platform.upper()}</b>\n"
-        f"🔢 Код клиента: <b>{profile_code}</b>\n\n"
-        f"🔐 Код подтверждения: <b>{code}</b>\n"
+        f"🧭 Платформа-инициатор: <b>{_h(from_platform.upper())}</b>\n"
+        f"🔢 Код клиента: <b>{_h(profile_code)}</b>\n\n"
+        f"🔐 Код подтверждения: <b>{_h(code)}</b>\n"
         "Передайте этот код в диалог другой платформы."
     )
 
 
 def unknown_state() -> str:
     return "⚙️ Не удалось обработать действие. Нажмите /start."
+
+
+def _h(value: object) -> str:
+    if value is None:
+        return "—"
+    return escape(str(value), quote=False)

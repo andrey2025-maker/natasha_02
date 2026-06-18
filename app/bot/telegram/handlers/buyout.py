@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from html import escape
 import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -172,11 +173,11 @@ def build_buyout_router(container: AppContainer) -> Router:
                     ]
                 )
                 text = (
-                    f"По заказу <b>№{order_number}</b> готова цена.\n"
+                    f"По заказу <b>№{_h(order_number)}</b> готова цена.\n"
                     f"Стоимость: <b>{price_rub} ₽</b>."
                 )
                 if manager_comment:
-                    text += f"\nКомментарий: {manager_comment}"
+                    text += f"\nКомментарий: {_h(manager_comment)}"
                 text += "\n\nПодтвердите заказ или отмените."
                 try:
                     await callback.bot.send_message(
@@ -262,7 +263,7 @@ def build_buyout_router(container: AppContainer) -> Router:
                 )
                 await callback.answer("Подтверждено")
                 await callback.message.edit_text(
-                    f"Вы подтвердили цену по заказу <b>{order_number}</b>.",
+                    f"Вы подтвердили цену по заказу <b>{_h(order_number)}</b>.",
                     parse_mode="HTML",
                     reply_markup=None,
                 )
@@ -284,7 +285,7 @@ def build_buyout_router(container: AppContainer) -> Router:
                     return
                 await callback.answer("Заказ отменен")
                 await callback.message.edit_text(
-                    f"Заказ <b>{order_number}</b> отменен.",
+                    f"Заказ <b>{_h(order_number)}</b> отменен.",
                     parse_mode="HTML",
                     reply_markup=None,
                 )
@@ -661,9 +662,9 @@ def build_buyout_router(container: AppContainer) -> Router:
                 ]
             ]
         )
-        preview_text = f"🧾 Черновик цены для <b>{order_number}</b>\nЦена: <b>{price_rub} ₽</b>"
+        preview_text = f"🧾 Черновик цены для <b>{_h(order_number)}</b>\nЦена: <b>{price_rub} ₽</b>"
         if comment:
-            preview_text += f"\nКомментарий: {comment}"
+            preview_text += f"\nКомментарий: {_h(comment)}"
         preview_text += "\n\nПроверьте и отправьте клиенту."
         await message.reply(preview_text, parse_mode="HTML", reply_markup=keyboard)
 
@@ -719,9 +720,9 @@ async def _notify_admin_payment_event(
             chat_id=container.settings.telegram.main_admin_id,
             text=(
                 "Событие оплаты:\n"
-                f"Заказ: <b>{order_number}</b>\n"
+                f"Заказ: <b>{_h(order_number)}</b>\n"
                 f"Пользователь TG ID: <code>{callback.from_user.id}</code>\n"
-                f"Действие: {event_text}"
+                f"Действие: {_h(event_text)}"
             ),
             parse_mode="HTML",
             disable_notification=silent,
@@ -744,7 +745,7 @@ async def _send_payment_review_to_admins(
     admin_ids = await container.admin_service.list_admins()
     text = (
         "Проверка оплаты:\n"
-        f"Заказ: <b>{order_number}</b>\n"
+        f"Заказ: <b>{_h(order_number)}</b>\n"
         f"Клиент TG ID: <code>{callback.from_user.id}</code>\n"
         "Выберите действие:"
     )
@@ -815,8 +816,8 @@ async def _notify_payment_group_event(
             chat_id=target_chat_id,
             text=(
                 "Событие оплаты:\n"
-                f"Заказ: <b>{order_number}</b>\n"
-                f"{event_text}"
+                f"Заказ: <b>{_h(order_number)}</b>\n"
+                f"{_h(event_text)}"
             ),
             parse_mode="HTML",
             disable_notification=silent,
@@ -853,9 +854,9 @@ async def _notify_user_status_changed_by_bot(
     if not profile:
         return
     text = (
-        f"Обновление по заказу <b>№{order.order_number}</b>.\n"
-        f"Новый статус: <b>{_status_title(status)}</b>\n"
-        f"{note}"
+        f"Обновление по заказу <b>№{_h(order.order_number)}</b>.\n"
+        f"Новый статус: <b>{_h(_status_title(status))}</b>\n"
+        f"{_h(note)}"
     )
     if profile.telegram_user_id:
         try:
@@ -900,12 +901,12 @@ async def _notify_new_buyout_order(
     if not target_chat_id:
         return
     text = (
-        f"🆕 <b>Новый выкуп №{order.order_number}</b>\n"
+        f"🆕 <b>Новый выкуп №{_h(order.order_number)}</b>\n"
         "Статус: <b>Ожидание</b>\n"
-        f"Профиль: <b>{profile.code}</b> ({profile.name or 'без имени'})\n"
+        f"Профиль: <b>{_h(profile.code)}</b> ({_h(profile.name or 'без имени')})\n"
         f"TG ID: <code>{message.from_user.id}</code>\n"
-        f"Ссылка: {order.product_url}\n"
-        f"Детали: {order.quantity_text}\n\n"
+        f"Ссылка: {_h(order.product_url)}\n"
+        f"Детали: {_h(order.quantity_text)}\n\n"
         "Ответьте на это сообщение:\n"
         "<code>2000</code> или <code>2000 | комментарий</code>"
     )
@@ -1002,3 +1003,9 @@ def _parse_group_price_input(text: str) -> tuple[int, str] | None:
     if price <= 0:
         return None
     return price, comment
+
+
+def _h(value: object) -> str:
+    if value is None:
+        return "—"
+    return escape(str(value), quote=False)

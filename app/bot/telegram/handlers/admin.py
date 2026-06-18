@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import aiohttp
+from html import escape
 import re
 
 from aiogram import F, Router
@@ -82,7 +83,7 @@ def build_admin_router(container: AppContainer) -> Router:
         await message.answer(
             "Админ-панель.\n"
             "Разделы: Профили, Блокировки, Вопросы, Список админов.\n"
-            "Обновление статуса заказа: order status <номер> <статус> | <комментарий>\n"
+            "Обновление статуса заказа: order status &lt;номер&gt; &lt;статус&gt; | &lt;комментарий&gt;\n"
             "Нижняя клавиатура остается постоянной, команды админки выбирайте кнопками в сообщениях или текстом.",
         )
 
@@ -403,7 +404,7 @@ def build_admin_router(container: AppContainer) -> Router:
             f"{media_line}\n"
             f"{_media_items_summary(media_items)}\n\n"
             "Команды: «Ред. оплата текст», «Ред. оплата медиа», «Очистить медиа оплаты».\n"
-            "Удаление одного файла: «Удалить медиа <номер>».",
+            "Удаление одного файла: «Удалить медиа &lt;номер&gt;».",
         )
         for media in media_items:
             await send_stored_media_to_telegram(message.bot, message.chat.id, media)
@@ -465,7 +466,7 @@ def build_admin_router(container: AppContainer) -> Router:
             f"{media_line}\n"
             f"{_media_items_summary(media_items)}\n\n"
             "Команды: «Ред. запрещенка текст», «Ред. запрещенка медиа», «Очистить медиа запрещенка».\n"
-            "Удаление одного файла: «Удалить медиа <номер>».",
+            "Удаление одного файла: «Удалить медиа &lt;номер&gt;».",
         )
         for media in media_items:
             await send_stored_media_to_telegram(message.bot, message.chat.id, media)
@@ -488,7 +489,7 @@ def build_admin_router(container: AppContainer) -> Router:
             f"Медиа: {len(media_items)}\n"
             f"{_media_items_summary(media_items)}\n\n"
             "Команды: «Ред. доставка текст», «Ред. доставка медиа», «Очистить медиа доставка».\n"
-            "Удаление одного файла: «Удалить медиа <номер>».",
+            "Удаление одного файла: «Удалить медиа &lt;номер&gt;».",
         )
         for media in media_items:
             await send_stored_media_to_telegram(message.bot, message.chat.id, media)
@@ -505,7 +506,7 @@ def build_admin_router(container: AppContainer) -> Router:
             f"Медиа: {len(media_items)}\n"
             f"{_media_items_summary(media_items)}\n\n"
             "Команды: «Ред. контакты текст», «Ред. контакты медиа», «Очистить медиа контакты».\n"
-            "Удаление одного файла: «Удалить медиа <номер>».",
+            "Удаление одного файла: «Удалить медиа &lt;номер&gt;».",
         )
         for media in media_items:
             await send_stored_media_to_telegram(message.bot, message.chat.id, media)
@@ -659,7 +660,7 @@ def build_admin_router(container: AppContainer) -> Router:
             note = note.strip()
         parts = body.split()
         if len(parts) < 2:
-            await message.answer("Формат: order status <номер> <статус> | <комментарий>")
+            await message.answer("Формат: order status &lt;номер&gt; &lt;статус&gt; | &lt;комментарий&gt;")
             return
         order_number, status_raw = parts[0], parts[1]
         status = _parse_order_status(status_raw)
@@ -721,7 +722,7 @@ def build_admin_router(container: AppContainer) -> Router:
             )
             if not handled:
                 await message.answer(
-                    "Сейчас ожидается медиа. Отправьте файл или команду «Удалить медиа <номер>» / «Готово медиа»."
+                    "Сейчас ожидается медиа. Отправьте файл или команду «Удалить медиа &lt;номер&gt;» / «Готово медиа»."
                 )
             return
 
@@ -767,7 +768,7 @@ def build_admin_router(container: AppContainer) -> Router:
             )
             if not handled:
                 await message.answer(
-                    "Сейчас ожидается медиа для запрещенки. Используйте «Удалить медиа <номер>» или «Готово медиа»."
+                    "Сейчас ожидается медиа для запрещенки. Используйте «Удалить медиа &lt;номер&gt;» или «Готово медиа»."
                 )
             return
 
@@ -779,7 +780,7 @@ def build_admin_router(container: AppContainer) -> Router:
             )
             if not handled:
                 await message.answer(
-                    "Сейчас ожидается медиа для раздела доставки. Используйте «Удалить медиа <номер>» или «Готово медиа»."
+                    "Сейчас ожидается медиа для раздела доставки. Используйте «Удалить медиа &lt;номер&gt;» или «Готово медиа»."
                 )
             return
 
@@ -791,7 +792,7 @@ def build_admin_router(container: AppContainer) -> Router:
             )
             if not handled:
                 await message.answer(
-                    "Сейчас ожидается медиа для раздела контактов. Используйте «Удалить медиа <номер>» или «Готово медиа»."
+                    "Сейчас ожидается медиа для раздела контактов. Используйте «Удалить медиа &lt;номер&gt;» или «Готово медиа»."
                 )
             return
         if utils_state.get("awaiting_faq_media_section_id"):
@@ -804,7 +805,7 @@ def build_admin_router(container: AppContainer) -> Router:
             )
             if not handled:
                 await message.answer(
-                    "Сейчас ожидается медиа FAQ. Используйте «Удалить медиа <номер>» или «Готово медиа»."
+                    "Сейчас ожидается медиа FAQ. Используйте «Удалить медиа &lt;номер&gt;» или «Готово медиа»."
                 )
             return
 
@@ -1156,9 +1157,9 @@ def build_admin_router(container: AppContainer) -> Router:
         )
         await message.answer(
             "Подтвердите изменение:\n"
-            f"Заказ: <b>{edit_order}</b>\n"
-            f"Поле: <b>{_field_title(str(state.get('pending_field') or ''))}</b>\n"
-            f"Новое значение: <code>{state.get('pending_value')}</code>",
+            f"Заказ: <b>{_h(edit_order)}</b>\n"
+            f"Поле: <b>{_h(_field_title(str(state.get('pending_field') or '')))}</b>\n"
+            f"Новое значение: <code>{_h(state.get('pending_value'))}</code>",
             parse_mode="HTML",
             reply_markup=confirm_keyboard,
         )
@@ -1469,7 +1470,7 @@ def build_admin_router(container: AppContainer) -> Router:
         _reset_admin_utils_waiters(state)
         state["awaiting_faq_action"] = "add"
         await _save_admin_utils_state(container, session, state)
-        await message.answer("Формат: root|<parent_id> | <название>")
+        await message.answer("Формат: root|&lt;parent_id&gt; | &lt;название&gt;")
 
     @router.message(F.text == "FAQ Ред. заголовок")
     async def faq_title_prompt(message: Message) -> None:
@@ -1482,7 +1483,7 @@ def build_admin_router(container: AppContainer) -> Router:
         _reset_admin_utils_waiters(state)
         state["awaiting_faq_action"] = "title"
         await _save_admin_utils_state(container, session, state)
-        await message.answer("Формат: <id> | <новый заголовок>")
+        await message.answer("Формат: &lt;id&gt; | &lt;новый заголовок&gt;")
 
     @router.message(F.text == "FAQ Ред. текст")
     async def faq_text_prompt(message: Message) -> None:
@@ -1495,7 +1496,7 @@ def build_admin_router(container: AppContainer) -> Router:
         _reset_admin_utils_waiters(state)
         state["awaiting_faq_action"] = "text"
         await _save_admin_utils_state(container, session, state)
-        await message.answer("Формат: <id> | <новый текст>")
+        await message.answer("Формат: &lt;id&gt; | &lt;новый текст&gt;")
 
     @router.message(F.text == "FAQ Показать root")
     async def faq_show_root_button(message: Message) -> None:
@@ -1512,25 +1513,25 @@ def build_admin_router(container: AppContainer) -> Router:
     async def faq_media_help_button(message: Message) -> None:
         if not await _ensure_admin(message):
             return
-        await message.answer("Формат: faq media <id раздела>")
+        await message.answer("Формат: faq media &lt;id раздела&gt;")
 
     @router.message(F.text == "FAQ Очистить медиа")
     async def faq_media_clear_help_button(message: Message) -> None:
         if not await _ensure_admin(message):
             return
-        await message.answer("Формат: faq media clear <id раздела>")
+        await message.answer("Формат: faq media clear &lt;id раздела&gt;")
 
     @router.message(F.text == "Добавить админа")
     async def add_admin_help(message: Message) -> None:
         if not await _ensure_admin(message):
             return
-        await message.answer("Напишите: add_admin <telegram_id>")
+        await message.answer("Напишите: add_admin &lt;telegram_id&gt;")
 
     @router.message(F.text == "Удалить админа")
     async def remove_admin_help(message: Message) -> None:
         if not await _ensure_admin(message):
             return
-        await message.answer("Напишите: del_admin <telegram_id>")
+        await message.answer("Напишите: del_admin &lt;telegram_id&gt;")
 
     @router.message(F.text.regexp(r"^(add_admin|del_admin)\s+\d+$"))
     async def admin_manage(message: Message) -> None:
@@ -1642,7 +1643,7 @@ def build_admin_router(container: AppContainer) -> Router:
         await message.answer(
             f"Режим медиа FAQ для раздела {section_id} ({section.title}).\n"
             "Отправьте файлы. Для завершения: «Готово медиа».\n"
-            "Удаление по индексу: faq media del <id> <index>."
+            "Удаление по индексу: faq media del &lt;id&gt; &lt;index&gt;."
         )
 
     @router.message(F.text.regexp(r"^faq\s+media\s+clear\s+\d+$"))
@@ -2077,7 +2078,7 @@ def build_admin_router(container: AppContainer) -> Router:
                 current_value = _order_field_value(order, field) if order else "—"
                 await callback.message.answer(
                     f"Введите новое значение для поля: {_field_title(field)}\n"
-                    f"Текущее: <code>{current_value}</code>",
+                    f"Текущее: <code>{_h(current_value)}</code>",
                     parse_mode="HTML",
                 )
                 return
@@ -2207,7 +2208,7 @@ async def _send_profiles_page(
         await message.answer("Профилей пока нет.")
         return
     rows = [
-        f"{idx}. {_profile_state_emoji(p)} {p.code} — {p.name or 'Без имени'}"
+        f"{idx}. {_profile_state_emoji(p)} {_h(p.code)} — {_h(p.name or 'Без имени')}"
         for idx, p in enumerate(items, start=1 + (safe_page - 1) * 9)
     ]
     text = "Профили (напишите `код 001` для просмотра):\n" + "\n".join(rows)
@@ -2547,19 +2548,19 @@ def _profile_details(
     reason_line = block_reason or "—"
     comment_line = profile_comment or "—"
     return (
-        f"<b>Имя:</b> {profile.name or '—'}\n"
-        f"<b>Код:</b> {profile.code}\n"
-        f"<b>Тел:</b> {profile.phone or '—'}\n"
-        f"<b>Город:</b> {profile.city or '—'}\n"
+        f"<b>Имя:</b> {_h(profile.name or '—')}\n"
+        f"<b>Код:</b> {_h(profile.code)}\n"
+        f"<b>Тел:</b> {_h(profile.phone or '—')}\n"
+        f"<b>Город:</b> {_h(profile.city or '—')}\n"
         f"<b>Загран паспорт:</b> {'Да' if profile.has_passport else 'Нет'}\n"
-        f"<b>Комментарий:</b> {comment_line}\n"
-        f"<b>TG ID:</b> {profile.telegram_user_id or 'Нет'}\n"
-        f"<b>VK ID:</b> {profile.vk_user_id or 'Нет'}\n"
-        f"<b>Заблокирован админом:</b> {blocked_admin_text}\n"
-        f"<b>Причина блокировки:</b> {reason_line}\n"
-        f"<b>Отписан от бота:</b> {blocked_bot_text}\n"
-        f"<b>Последняя активность:</b> {profile.last_activity_at.strftime('%d.%m.%Y %H:%M')}\n"
-        f"<b>Дата регистрации:</b> {profile.created_at.strftime('%d.%m.%Y %H:%M')}"
+        f"<b>Комментарий:</b> {_h(comment_line)}\n"
+        f"<b>TG ID:</b> {_h(profile.telegram_user_id or 'Нет')}\n"
+        f"<b>VK ID:</b> {_h(profile.vk_user_id or 'Нет')}\n"
+        f"<b>Заблокирован админом:</b> {_h(blocked_admin_text)}\n"
+        f"<b>Причина блокировки:</b> {_h(reason_line)}\n"
+        f"<b>Отписан от бота:</b> {_h(blocked_bot_text)}\n"
+        f"<b>Последняя активность:</b> {_h(profile.last_activity_at.strftime('%d.%m.%Y %H:%M'))}\n"
+        f"<b>Дата регистрации:</b> {_h(profile.created_at.strftime('%d.%m.%Y %H:%M'))}"
     )
 
 
@@ -2590,7 +2591,7 @@ async def _send_orders_panel(
         for order in orders:
             mark = "✅" if order.order_number in selected else "⬜️"
             lines.append(
-                f"{mark} {order.order_number} — {_order_status_name(order.status)} "
+                f"{mark} {_h(order.order_number)} — {_h(_order_status_name(order.status))} "
                 f"({order.updated_at.strftime('%d.%m.%y')})"
             )
 
@@ -2768,7 +2769,7 @@ async def _dispatch_broadcast_text(
     for profile in profiles:
         if profile.telegram_user_id:
             try:
-                await message.bot.send_message(chat_id=profile.telegram_user_id, text=text)
+                await message.bot.send_message(chat_id=profile.telegram_user_id, text=text, parse_mode=None)
                 tg_sent += 1
             except Exception as exc:
                 tg_failed += 1
@@ -2820,24 +2821,28 @@ async def _dispatch_broadcast_media(
                         chat_id=profile.telegram_user_id,
                         photo=media_id,
                         caption=caption,
+                        parse_mode=None,
                     )
                 elif media_kind == "video":
                     await message.bot.send_video(
                         chat_id=profile.telegram_user_id,
                         video=media_id,
                         caption=caption,
+                        parse_mode=None,
                     )
                 elif media_kind == "animation":
                     await message.bot.send_animation(
                         chat_id=profile.telegram_user_id,
                         animation=media_id,
                         caption=caption,
+                        parse_mode=None,
                     )
                 elif media_kind == "document":
                     await message.bot.send_document(
                         chat_id=profile.telegram_user_id,
                         document=media_id,
                         caption=caption,
+                        parse_mode=None,
                     )
                 tg_sent += 1
             except Exception as exc:
@@ -2875,11 +2880,11 @@ async def _notify_order_status_change(
     if not profile:
         return
     text = (
-        f"Обновление по заказу <b>№{order.order_number}</b>.\n"
-        f"Новый статус: <b>{_order_status_name(new_status)}</b>."
+        f"Обновление по заказу <b>№{_h(order.order_number)}</b>.\n"
+        f"Новый статус: <b>{_h(_order_status_name(new_status))}</b>."
     )
     if note.strip():
-        text += f"\nКомментарий: {note.strip()}"
+        text += f"\nКомментарий: {_h(note.strip())}"
     payment_media_items: list[dict] = []
     if new_status == OrderStatus.WAITING_PAYMENT:
         payment_text = await payment_store.get_text()
@@ -2961,20 +2966,20 @@ async def _send_order_edit_panel(
     pending_field = state.get("pending_field")
     pending_value = state.get("pending_value")
     text = (
-        f"<b>Редактирование заказа {order_number}</b>\n"
-        f"Статус: <b>{_order_status_name(order.status)}</b>\n"
-        f"Ссылка: <code>{order.product_url}</code>\n"
-        f"Детали: <code>{order.quantity_text}</code>\n"
-        f"Цена: <code>{order.price_rub if order.price_rub is not None else '—'}</code>\n"
-        f"Комментарий: <code>{order.manager_comment or '—'}</code>\n"
-        f"Трек: <code>{order.track_number or '—'}</code>\n\n"
+        f"<b>Редактирование заказа {_h(order_number)}</b>\n"
+        f"Статус: <b>{_h(_order_status_name(order.status))}</b>\n"
+        f"Ссылка: <code>{_h(order.product_url)}</code>\n"
+        f"Детали: <code>{_h(order.quantity_text)}</code>\n"
+        f"Цена: <code>{_h(order.price_rub if order.price_rub is not None else '—')}</code>\n"
+        f"Комментарий: <code>{_h(order.manager_comment or '—')}</code>\n"
+        f"Трек: <code>{_h(order.track_number or '—')}</code>\n\n"
         "Выберите поле и отправьте новое значение следующим сообщением."
     )
     if pending_field and pending_value:
         text += (
             "\n\n"
-            f"Ожидает подтверждения: <b>{_field_title(str(pending_field))}</b> = "
-            f"<code>{pending_value}</code>"
+            f"Ожидает подтверждения: <b>{_h(_field_title(str(pending_field)))}</b> = "
+            f"<code>{_h(pending_value)}</code>"
         )
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -3534,7 +3539,7 @@ async def _handle_media_text_command(
         items = await store.get_media_items(section_id) if section_id is not None else await store.get_media_items()
         await message.answer(
             f"Медиа {section_name}: {len(items)}\n{_media_items_summary(items)}\n"
-            "Удаление: «Удалить медиа <номер>»."
+            "Удаление: «Удалить медиа &lt;номер&gt;»."
         )
         return True
     match = _DELETE_MEDIA_RE.match(text)
@@ -3562,8 +3567,8 @@ def _media_items_summary(items: list[dict], limit: int = 20) -> str:
     for idx, item in enumerate(items[:limit], start=1):
         media_type = str(item.get("media_type", "unknown"))
         caption = str(item.get("caption", "")).strip()
-        suffix = f" — {caption[:40]}" if caption else ""
-        lines.append(f"{idx}. {media_type}{suffix}")
+        suffix = f" — {_h(caption[:40])}" if caption else ""
+        lines.append(f"{idx}. {_h(media_type)}{suffix}")
     if len(items) > limit:
         lines.append(f"... и еще {len(items) - limit}")
     return "\n".join(lines)
@@ -3728,3 +3733,9 @@ async def _vk_api_call(token: str, method: str, params: dict) -> object:
     if not isinstance(raw, dict):
         return {}
     return raw.get("response", {})
+
+
+def _h(value: object) -> str:
+    if value is None:
+        return "—"
+    return escape(str(value), quote=False)
