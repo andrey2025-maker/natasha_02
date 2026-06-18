@@ -146,3 +146,12 @@ def admin_menu_keyboard(is_main_admin: bool) -> ReplyKeyboardMarkup:
         rows.append([KeyboardButton(text="Добавить админа"), KeyboardButton(text="Удалить админа")])
     rows.append([KeyboardButton(text="Назад")])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
+
+def buyout_add_more_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Ещё товар"), KeyboardButton(text="Нет")],
+        ],
+        resize_keyboard=True,
+    )

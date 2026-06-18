@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from html import escape
 from urllib.parse import urlparse
 
 from app.domain.enums import DeliveryFlowType, DialogState, OrderStatus, Platform
@@ -203,14 +204,25 @@ class BuyoutFlowService:
         for idx, order in enumerate(orders, start=1 + offset):
             history = await self._orders.list_status_history(order.id, limit=3)
             history_text = _format_history_short(history)
+            media_items = await self._orders.list_order_media(order.id)
+            media_indexes = ",".join(str(i) for i in range(1, len(media_items) + 1)) if media_items else ""
+            order_lines = [f"<b>Выкуп №{_h(order.order_number)}</b>"]
+            if media_indexes:
+                order_lines.append(f"Медиа: {_h(media_indexes)}")
+            order_lines.extend(
+                [
+                    f"Статус: <b>{_h(_status_title(order.status))}</b> ({order.updated_at.strftime('%d.%m.%y')})",
+                    f"Цена: {_h(order.price_rub if order.price_rub is not None else '—')}",
+                    f"Ссылка: {_h(order.product_url)}",
+                    f"Детали: {_h(order.quantity_text)}",
+                    f"Комментарий: {_h(order.manager_comment or '—')}",
+                    f"Трек: {_h(order.track_number or '—')}",
+                    history_text,
+                ]
+            )
             lines.append(
-                f"{idx}. <b>Выкуп №{order.order_number}</b>\n"
-                f"Статус: <b>{_status_title(order.status)}</b>\n"
-                f"Ссылка: {order.product_url}\n"
-                f"Детали: {order.quantity_text}\n"
-                f"Трек: {order.track_number or '—'}\n"
-                f"Дата: {order.updated_at.strftime('%d.%m.%y')}\n"
-                f"{history_text}"
+                f"{idx}.\n"
+                f"<tg-spoiler>{'\n'.join(order_lines)}</tg-spoiler>"
             )
 
         total_pages = (total + page_size - 1) // page_size
@@ -439,6 +451,12 @@ def _dedupe_media_items(items: list[dict]) -> list[dict]:
         seen.add(key)
         result.append(item)
     return result
+
+
+def _h(value: object) -> str:
+    if value is None:
+        return "—"
+    return escape(str(value), quote=False)
 
 
 _FILTER_ALIASES: dict[OrderStatus, set[str]] = {

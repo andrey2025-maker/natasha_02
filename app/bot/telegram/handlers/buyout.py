@@ -11,7 +11,12 @@ from aiogram.exceptions import TelegramForbiddenError
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
-from app.bot.telegram.keyboards.profile import my_orders_filters_keyboard, my_orders_pagination_keyboard
+from app.bot.telegram.keyboards.profile import (
+    buyout_add_more_keyboard,
+    main_menu_keyboard,
+    my_orders_filters_keyboard,
+    my_orders_pagination_keyboard,
+)
 from app.core.container import AppContainer
 from app.domain.enums import DialogState, OrderStatus, Platform
 from app.domain.models import OutboundMessage
@@ -44,6 +49,11 @@ def build_buyout_router(container: AppContainer) -> Router:
         kwargs = {"parse_mode": "HTML"}
         if response.reply_markup is not None:
             kwargs["reply_markup"] = response.reply_markup
+        elif response.state == DialogState.BUYOUT_ADD_MORE:
+            kwargs["reply_markup"] = buyout_add_more_keyboard()
+        elif response.state == DialogState.IDLE:
+            is_admin = bool(message.from_user and await container.admin_service.is_admin(message.from_user.id))
+            kwargs["reply_markup"] = main_menu_keyboard(include_admin=is_admin)
         await message.answer(response.text, **kwargs)
 
     @router.message(F.text.in_({"Заказ выкупа", "🛍 Заказ выкупа"}))

@@ -18,7 +18,7 @@ from aiogram.types import (
 )
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
-from app.bot.telegram.keyboards.profile import admin_menu_keyboard, main_menu_keyboard
+from app.bot.telegram.keyboards.profile import main_menu_keyboard
 from app.core.container import AppContainer
 from app.domain.enums import OrderStatus, Platform
 from app.domain.models import OutboundMessage, UserProfile
@@ -81,11 +81,8 @@ def build_admin_router(container: AppContainer) -> Router:
         user_id = message.from_user.id
         is_main = user_id == container.settings.telegram.main_admin_id
         await message.answer(
-            "Админ-панель.\n"
-            "Разделы: Профили, Блокировки, Вопросы, Список админов.\n"
-            "Обновление статуса заказа: order status &lt;номер&gt; &lt;статус&gt; | &lt;комментарий&gt;\n"
-            "Нижняя клавиатура остается постоянной, команды админки выбирайте кнопками в сообщениях или текстом.",
-            reply_markup=admin_menu_keyboard(is_main_admin=is_main),
+            "Админ-панель.\nВыберите раздел:",
+            reply_markup=_admin_root_inline_keyboard(user_id, callback_codec, is_main=is_main),
         )
 
     @router.message(F.text == "Назад")
@@ -120,7 +117,6 @@ def build_admin_router(container: AppContainer) -> Router:
         await message.answer(
             "📦 Раздел заказов.\n"
             "Используйте команды: «Выкупы» или «Самовыкуп».",
-            reply_markup=_orders_root_keyboard(),
         )
 
     @router.message(F.text == "Выкупы")
@@ -168,7 +164,6 @@ def build_admin_router(container: AppContainer) -> Router:
         await message.answer(
             "🧰 Утилиты админки.\n"
             "Разделы: «Бэкапы», «Коды», «Группа», «Оплата», «Оплаты группа».",
-            reply_markup=_utils_keyboard(),
         )
 
     @router.message(F.text == "Бэкапы")
@@ -209,7 +204,6 @@ def build_admin_router(container: AppContainer) -> Router:
             "или\n"
             "<code>-1001234567890 42</code> (с topic_id)",
             parse_mode="HTML",
-            reply_markup=_group_keyboard(),
         )
 
     @router.message(F.text == "Уведомления")
@@ -314,7 +308,6 @@ def build_admin_router(container: AppContainer) -> Router:
             "или\n"
             "<code>-1001234567890 42</code> (с topic_id)",
             parse_mode="HTML",
-            reply_markup=_payment_group_keyboard(),
         )
 
     @router.message(F.text == "Задать оплаты группу")
@@ -360,7 +353,6 @@ def build_admin_router(container: AppContainer) -> Router:
             "🔐 Резерв кодов:\n"
             f"{preview}\n\n"
             "Команды: «Коды добавить», «Коды удалить».",
-            reply_markup=_codes_keyboard(),
         )
 
     @router.message(F.text == "Коды добавить")
@@ -411,7 +403,6 @@ def build_admin_router(container: AppContainer) -> Router:
             f"{_media_items_summary(media_items)}\n\n"
             "Команды: «Ред. оплата текст», «Ред. оплата медиа», «Очистить медиа оплаты».\n"
             "Удаление одного файла: «Удалить медиа &lt;номер&gt;».",
-            reply_markup=_payment_keyboard(),
         )
         for media in media_items:
             await send_stored_media_to_telegram(message.bot, message.chat.id, media)
@@ -474,7 +465,6 @@ def build_admin_router(container: AppContainer) -> Router:
             f"{_media_items_summary(media_items)}\n\n"
             "Команды: «Ред. запрещенка текст», «Ред. запрещенка медиа», «Очистить медиа запрещенка».\n"
             "Удаление одного файла: «Удалить медиа &lt;номер&gt;».",
-            reply_markup=_prohibited_keyboard(),
         )
         for media in media_items:
             await send_stored_media_to_telegram(message.bot, message.chat.id, media)
@@ -483,10 +473,7 @@ def build_admin_router(container: AppContainer) -> Router:
     async def admin_content(message: Message) -> None:
         if not await _ensure_admin(message):
             return
-        await message.answer(
-            "🧩 Управление контентом.\nРазделы: «Доставка контент», «Контакты контент», «Запрещенка».",
-            reply_markup=_content_keyboard(),
-        )
+        await message.answer("🧩 Управление контентом.\nРазделы: «Доставка контент», «Контакты контент», «Запрещенка».")
 
     @router.message(F.text == "Доставка контент")
     async def admin_delivery_content(message: Message) -> None:
@@ -501,7 +488,6 @@ def build_admin_router(container: AppContainer) -> Router:
             f"{_media_items_summary(media_items)}\n\n"
             "Команды: «Ред. доставка текст», «Ред. доставка медиа», «Очистить медиа доставка».\n"
             "Удаление одного файла: «Удалить медиа &lt;номер&gt;».",
-            reply_markup=_delivery_content_keyboard(),
         )
         for media in media_items:
             await send_stored_media_to_telegram(message.bot, message.chat.id, media)
@@ -519,7 +505,6 @@ def build_admin_router(container: AppContainer) -> Router:
             f"{_media_items_summary(media_items)}\n\n"
             "Команды: «Ред. контакты текст», «Ред. контакты медиа», «Очистить медиа контакты».\n"
             "Удаление одного файла: «Удалить медиа &lt;номер&gt;».",
-            reply_markup=_contacts_content_keyboard(),
         )
         for media in media_items:
             await send_stored_media_to_telegram(message.bot, message.chat.id, media)
@@ -1470,7 +1455,6 @@ def build_admin_router(container: AppContainer) -> Router:
             "📚 Управление FAQ.\n"
             "Команды: «FAQ Добавить», «FAQ Ред. заголовок», «FAQ Ред. текст», "
             "«FAQ Медиа», «FAQ Очистить медиа», «FAQ Показать root».",
-            reply_markup=_faq_admin_keyboard(),
         )
 
     @router.message(F.text == "FAQ Добавить")
@@ -1709,6 +1693,88 @@ def build_admin_router(container: AppContainer) -> Router:
             action = callback_codec.decode(callback.data, callback.from_user.id)
         except CallbackAuthError:
             raise SkipHandler
+
+        if action.startswith("admin:menu:"):
+            menu_action = action.split(":", maxsplit=2)[2]
+            if menu_action == "profiles":
+                await callback.answer()
+                await _send_profiles_page(
+                    callback.message,
+                    user_id=callback.from_user.id,
+                    page=1,
+                    container=container,
+                    codec=callback_codec,
+                )
+                return
+            if menu_action == "blocks":
+                await callback.answer()
+                await callback.message.answer(
+                    "Управление блокировками:",
+                    reply_markup=_blocks_menu_keyboard(callback.from_user.id, callback_codec),
+                )
+                return
+            if menu_action == "orders":
+                session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, callback.from_user.id)
+                state = _get_admin_orders_state(session)
+                state["page"] = 1
+                await _save_admin_orders_state(container, session, state)
+                await callback.answer()
+                await _send_orders_panel(callback.message, container, callback_codec, callback.from_user.id, state)
+                return
+            if menu_action == "stats":
+                text = await container.stats_service.build_overview_text()
+                await callback.answer()
+                await callback.message.answer(text, parse_mode="HTML")
+                return
+            if menu_action == "faq":
+                session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, callback.from_user.id)
+                state = _get_admin_utils_state(session)
+                state["awaiting_faq_action"] = None
+                await _save_admin_utils_state(container, session, state)
+                await callback.answer()
+                await callback.message.answer(
+                    "📚 Управление FAQ.\n"
+                    "Команды: «FAQ Добавить», «FAQ Ред. заголовок», «FAQ Ред. текст», "
+                    "«FAQ Медиа», «FAQ Очистить медиа», «FAQ Показать root».",
+                )
+                return
+            if menu_action == "admins":
+                is_main = callback.from_user.id == container.settings.telegram.main_admin_id
+                open_for_all = await admin_access_store.is_open_for_all_admins()
+                if not is_main and not open_for_all:
+                    await callback.answer("Раздел доступен только главному админу.", show_alert=True)
+                    return
+                admin_ids = await container.admin_service.list_admins()
+                lines = [f"- {admin_id}" for admin_id in admin_ids]
+                await callback.answer()
+                await callback.message.answer(
+                    "Админы:\n" + "\n".join(lines),
+                    reply_markup=_admins_access_keyboard(
+                        user_id=callback.from_user.id,
+                        codec=callback_codec,
+                        open_for_all=open_for_all,
+                        is_main=is_main,
+                        admin_ids=admin_ids,
+                        main_admin_id=container.settings.telegram.main_admin_id,
+                    ),
+                )
+                return
+            if menu_action == "broadcast":
+                await callback.answer()
+                await callback.message.answer(
+                    "Выберите аудиторию для рассылки, затем отправьте текст или одно медиа с подписью.",
+                    reply_markup=_broadcast_keyboard(callback.from_user.id, callback_codec),
+                )
+                return
+            if menu_action == "utils":
+                await callback.answer()
+                await callback.message.answer(
+                    "🧰 Утилиты админки.\n"
+                    "Разделы: «Бэкапы», «Коды», «Группа», «Оплата», «Оплаты группа».",
+                )
+                return
+            await callback.answer()
+            return
 
         if action.startswith("admin:broadcast:"):
             audience = action.split(":")[-1]
@@ -2561,21 +2627,29 @@ def _profile_details(
     blocked_bot_text = "Да" if profile.blocked_bot else "Нет"
     reason_line = block_reason or "—"
     comment_line = profile_comment or "—"
-    return (
-        f"<b>Имя:</b> {_h(profile.name or '—')}\n"
+    name_value = _h(profile.name or "—")
+    if profile.telegram_user_id:
+        name_value = f"<a href='tg://user?id={int(profile.telegram_user_id)}'>{name_value}</a>"
+    vk_value = "Нет"
+    if profile.vk_user_id:
+        vk_id = int(profile.vk_user_id)
+        vk_value = f"<a href='https://vk.com/id{vk_id}'>id{vk_id}</a>"
+    details = (
+        f"<b>Имя:</b> {name_value}\n"
         f"<b>Код:</b> {_h(profile.code)}\n"
         f"<b>Тел:</b> {_h(profile.phone or '—')}\n"
         f"<b>Город:</b> {_h(profile.city or '—')}\n"
         f"<b>Загран паспорт:</b> {'Да' if profile.has_passport else 'Нет'}\n"
         f"<b>Комментарий:</b> {_h(comment_line)}\n"
-        f"<b>TG ID:</b> {_h(profile.telegram_user_id or 'Нет')}\n"
-        f"<b>VK ID:</b> {_h(profile.vk_user_id or 'Нет')}\n"
+        f"<b>ID:</b> {_h(profile.telegram_user_id or 'Нет')}\n"
+        f"<b>ВК:</b> {vk_value}\n"
         f"<b>Заблокирован админом:</b> {_h(blocked_admin_text)}\n"
         f"<b>Причина блокировки:</b> {_h(reason_line)}\n"
         f"<b>Отписан от бота:</b> {_h(blocked_bot_text)}\n"
         f"<b>Последняя активность:</b> {_h(profile.last_activity_at.strftime('%d.%m.%Y %H:%M'))}\n"
         f"<b>Дата регистрации:</b> {_h(profile.created_at.strftime('%d.%m.%Y %H:%M'))}"
     )
+    return f"{_profile_state_emoji(profile)} <b>Карточка профиля</b>\n<tg-spoiler>{details}</tg-spoiler>"
 
 
 async def _send_orders_panel(
@@ -3141,6 +3215,29 @@ def _broadcast_keyboard(user_id: int, codec: CallbackCodec) -> InlineKeyboardMar
             ]
         ]
     )
+
+
+def _admin_root_inline_keyboard(user_id: int, codec: CallbackCodec, is_main: bool) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(text="Профили", callback_data=codec.encode("admin:menu:profiles", user_id)),
+            InlineKeyboardButton(text="Блокировки", callback_data=codec.encode("admin:menu:blocks", user_id)),
+        ],
+        [
+            InlineKeyboardButton(text="Заказы", callback_data=codec.encode("admin:menu:orders", user_id)),
+            InlineKeyboardButton(text="Статистика", callback_data=codec.encode("admin:menu:stats", user_id)),
+        ],
+        [
+            InlineKeyboardButton(text="Вопросы", callback_data=codec.encode("admin:menu:faq", user_id)),
+            InlineKeyboardButton(text="Рассылка", callback_data=codec.encode("admin:menu:broadcast", user_id)),
+        ],
+        [InlineKeyboardButton(text="Утилиты", callback_data=codec.encode("admin:menu:utils", user_id))],
+    ]
+    if is_main:
+        rows.append(
+            [InlineKeyboardButton(text="Список админов", callback_data=codec.encode("admin:menu:admins", user_id))]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _utils_keyboard() -> ReplyKeyboardMarkup:
