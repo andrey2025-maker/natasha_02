@@ -220,9 +220,10 @@ class BuyoutFlowService:
                     history_text,
                 ]
             )
+            order_block = "\n".join(order_lines)
             lines.append(
                 f"{idx}.\n"
-                f"<tg-spoiler>{'\n'.join(order_lines)}</tg-spoiler>"
+                f"<tg-spoiler>{order_block}</tg-spoiler>"
             )
 
         total_pages = (total + page_size - 1) // page_size
