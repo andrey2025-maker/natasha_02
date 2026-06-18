@@ -48,15 +48,22 @@ def build_profile_router(container: AppContainer) -> Router:
     notification_settings_store = NotificationSettingsStore(container.settings.database.dsn)
     topic_dialog_store = TopicDialogStore(container.settings.database.dsn)
 
-    async def _apply_response(message: Message, response: FlowResponse) -> None:
-        await _dispatch_outbound(message, response)
-        kwargs = {"parse_mode": "HTML"}
-        if response.reply_markup is not None:
-            kwargs["reply_markup"] = response.reply_markup
-        await message.answer(response.text, **kwargs)
+    async def _apply_response(message: Message, response: object) -> None:
+        outbound_messages = getattr(response, "outbound_messages", None)
+        if isinstance(outbound_messages, list) and outbound_messages:
+            await _dispatch_outbound(message, outbound_messages)
 
-    async def _dispatch_outbound(message: Message, response: FlowResponse) -> None:
-        for outgoing in response.outbound_messages:
+        text = getattr(response, "text", None)
+        if not isinstance(text, str):
+            return
+        kwargs = {"parse_mode": "HTML"}
+        reply_markup = getattr(response, "reply_markup", None)
+        if reply_markup is not None:
+            kwargs["reply_markup"] = reply_markup
+        await message.answer(text, **kwargs)
+
+    async def _dispatch_outbound(message: Message, outbound_messages: list[dict]) -> None:
+        for outgoing in outbound_messages:
             platform_name = str(outgoing["platform"])
             target_platform = Platform(platform_name)
             target_user_id = int(outgoing["platform_user_id"])

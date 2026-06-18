@@ -14,6 +14,7 @@ from app.bot.telegram.handlers.profile import build_profile_router
 from app.bot.telegram.handlers.questions import build_questions_router
 from app.bot.telegram.handlers.start import build_start_router
 from app.bootstrap import build_container_from_env
+from app.core.process_lock import ProcessLock, ProcessLockError
 from app.services.admin_tools_service import BackupService, NotificationSettingsStore, run_periodic_backup_loop
 from app.services.error_notifier import ErrorNotifier
 
@@ -22,6 +23,13 @@ logger = logging.getLogger(__name__)
 
 async def run_telegram_bot() -> None:
     logging.basicConfig(level=logging.INFO)
+    lock = ProcessLock("/tmp/cargo55-telegram-polling.lock")
+    try:
+        lock.acquire()
+    except ProcessLockError:
+        logger.error("Another Telegram polling instance is already running.")
+        return
+
     container = await build_container_from_env()
 
     bot = Bot(
@@ -65,6 +73,7 @@ async def run_telegram_bot() -> None:
         vk_worker_task.cancel()
         vk_incoming_task.cancel()
         periodic_backup_task.cancel()
+        lock.release()
 
 
 def main() -> None:
