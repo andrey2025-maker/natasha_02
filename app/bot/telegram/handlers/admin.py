@@ -834,6 +834,63 @@ def build_admin_router(container: AppContainer) -> Router:
             )
             return
 
+        profile_edit_code = str(utils_state.get("awaiting_profile_edit_code") or "").strip()
+        profile_edit_field = str(utils_state.get("awaiting_profile_edit_field") or "").strip()
+        if profile_edit_code and profile_edit_field:
+            profile = await container.profile_repo.get_by_code(profile_edit_code)
+            if not profile:
+                utils_state["awaiting_profile_edit_code"] = None
+                utils_state["awaiting_profile_edit_field"] = None
+                await _save_admin_utils_state(container, session, utils_state)
+                await message.answer("Профиль не найден.")
+                return
+            value = message.text.strip()
+            if profile_edit_field == "name":
+                profile.name = value
+                await container.profile_repo.save(profile)
+                answer_text = "Имя обновлено."
+            elif profile_edit_field == "phone":
+                profile.phone = value
+                await container.profile_repo.save(profile)
+                answer_text = "Телефон обновлен."
+            elif profile_edit_field == "city":
+                profile.city = value
+                await container.profile_repo.save(profile)
+                answer_text = "Город обновлен."
+            elif profile_edit_field == "passport":
+                normalized = value.lower()
+                if normalized in {"да", "yes", "y", "1"}:
+                    profile.has_passport = True
+                elif normalized in {"нет", "no", "n", "0"}:
+                    profile.has_passport = False
+                else:
+                    await message.answer("Введите «Да» или «Нет».")
+                    return
+                await container.profile_repo.save(profile)
+                answer_text = "Поле «Загран паспорт» обновлено."
+            elif profile_edit_field == "comment":
+                if value == "-":
+                    await profile_comment_store.clear_comment(profile_edit_code)
+                    answer_text = "Комментарий очищен."
+                else:
+                    await profile_comment_store.set_comment(profile_edit_code, value)
+                    answer_text = "Комментарий обновлен."
+            else:
+                await message.answer("Неизвестное поле.")
+                return
+            utils_state["awaiting_profile_edit_code"] = None
+            utils_state["awaiting_profile_edit_field"] = None
+            await _save_admin_utils_state(container, session, utils_state)
+            block_reason = await block_reason_store.get_reason(profile.code)
+            profile_comment = await profile_comment_store.get_comment(profile.code)
+            await message.answer(answer_text)
+            await message.answer(
+                _profile_details(profile, block_reason=block_reason, profile_comment=profile_comment),
+                parse_mode="HTML",
+                reply_markup=_profile_actions_keyboard(profile, message.from_user.id, callback_codec),
+            )
+            return
+
         profile_comment_code = str(utils_state.get("awaiting_profile_comment_code") or "").strip()
         if profile_comment_code:
             text = message.text.strip()
@@ -2053,6 +2110,52 @@ def build_admin_router(container: AppContainer) -> Router:
             )
             return
 
+        if action.startswith("admin:profile:edit:"):
+            code = action.split(":")[-1]
+            profile = await container.admin_service.get_profile(code)
+            if not profile:
+                await callback.answer("Профиль не найден", show_alert=True)
+                return
+            await callback.answer()
+            await callback.message.answer(
+                f"Что редактировать в профиле <b>{_h(code)}</b>?",
+                parse_mode="HTML",
+                reply_markup=_profile_edit_fields_keyboard(code, callback.from_user.id, callback_codec),
+            )
+            return
+
+        if action.startswith("admin:profile:edit_field:"):
+            parts = action.split(":", maxsplit=4)
+            if len(parts) != 5:
+                await callback.answer("Некорректная команда", show_alert=True)
+                return
+            code = parts[3]
+            field = parts[4]
+            if field not in {"name", "phone", "city", "passport", "comment"}:
+                await callback.answer("Неизвестное поле", show_alert=True)
+                return
+            profile = await container.admin_service.get_profile(code)
+            if not profile:
+                await callback.answer("Профиль не найден", show_alert=True)
+                return
+            session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, callback.from_user.id)
+            utils_state = _get_admin_utils_state(session)
+            _reset_admin_utils_waiters(utils_state)
+            utils_state["awaiting_profile_edit_code"] = code
+            utils_state["awaiting_profile_edit_field"] = field
+            await _save_admin_utils_state(container, session, utils_state)
+            field_title = {
+                "name": "Имя",
+                "phone": "Телефон",
+                "city": "Город",
+                "passport": "Загран паспорт",
+                "comment": "Комментарий",
+            }[field]
+            hint = "Введите Да/Нет." if field == "passport" else "Отправьте новое значение."
+            await callback.answer()
+            await callback.message.answer(f"Редактирование поля «{field_title}» для кода {code}.\n{hint}")
+            return
+
         if action.startswith("admin:profile:comment:"):
             code = action.split(":")[-1]
             profile = await container.admin_service.get_profile(code)
@@ -2287,11 +2390,10 @@ async def _send_profiles_page(
     if not items:
         await message.answer("Профилей пока нет.")
         return
-    rows = [
-        f"{idx}. {_profile_state_emoji(p)} {_h(p.code)} — {_h(p.name or 'Без имени')}"
-        for idx, p in enumerate(items, start=1 + (safe_page - 1) * 9)
-    ]
-    text = "Профили (напишите `код 001` для просмотра):\n" + "\n".join(rows)
+    lines = ["Профили:"]
+    for idx, p in enumerate(items, start=1 + (safe_page - 1) * 9):
+        lines.append(_profile_list_item_text(idx, p))
+    text = "\n\n".join(lines)
     await message.answer(text, parse_mode="HTML", reply_markup=_profiles_pagination(user_id, safe_page, codec, items))
 
 
@@ -2299,19 +2401,19 @@ def _profiles_pagination(user_id: int, page: int, codec: CallbackCodec, items: l
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     rows: list[list[InlineKeyboardButton]] = []
-    code_buttons: list[InlineKeyboardButton] = []
     for item in items:
-        code_buttons.append(
-            InlineKeyboardButton(
-                text=item.code,
-                callback_data=codec.encode(f"admin:profile:view:{item.code}", user_id),
-            )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"👁 {_h(item.code)}",
+                    callback_data=codec.encode(f"admin:profile:view:{item.code}", user_id),
+                ),
+                InlineKeyboardButton(
+                    text=f"✏️ Редактировать {_h(item.code)}",
+                    callback_data=codec.encode(f"admin:profile:edit:{item.code}", user_id),
+                ),
+            ]
         )
-        if len(code_buttons) == 3:
-            rows.append(code_buttons)
-            code_buttons = []
-    if code_buttons:
-        rows.append(code_buttons)
     rows.append(
         [
             InlineKeyboardButton(
@@ -2588,6 +2690,21 @@ def _profile_state_emoji(profile: UserProfile) -> str:
     return "✅"
 
 
+def _profile_list_item_text(index: int, profile: UserProfile) -> str:
+    details = (
+        f"Имя: {_h(profile.name or '—')}\n"
+        f"Код: {_h(profile.code)}\n"
+        f"Тел: {_h(profile.phone or '—')}\n"
+        f"Город: {_h(profile.city or '—')}\n"
+        f"Загран паспорт: {'Да' if profile.has_passport else 'Нет'}\n"
+        f"ID: {_h(profile.telegram_user_id or 'Нет')}\n"
+        f"ВК: {_h(profile.vk_user_id or 'Нет')}\n"
+        f"Последняя активность: {_h(profile.last_activity_at.strftime('%d.%m.%Y %H:%M'))}\n"
+        f"Дата регистрации: {_h(profile.created_at.strftime('%d.%m.%Y %H:%M'))}"
+    )
+    return f"{index}. {_profile_state_emoji(profile)} <b>{_h(profile.code)}</b>\n<tg-spoiler>{details}</tg-spoiler>"
+
+
 def _block_button(profile: UserProfile, user_id: int, codec: CallbackCodec):
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -2610,12 +2727,53 @@ def _profile_actions_keyboard(profile: UserProfile, user_id: int, codec: Callbac
     rows.append(
         [
             InlineKeyboardButton(
+                text="✏️ Редактировать",
+                callback_data=codec.encode(f"admin:profile:edit:{profile.code}", user_id),
+            )
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
                 text="✏️ Комментарий",
                 callback_data=codec.encode(f"admin:profile:comment:{profile.code}", user_id),
             )
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _profile_edit_fields_keyboard(profile_code: str, user_id: int, codec: CallbackCodec) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Имя",
+                    callback_data=codec.encode(f"admin:profile:edit_field:{profile_code}:name", user_id),
+                ),
+                InlineKeyboardButton(
+                    text="Телефон",
+                    callback_data=codec.encode(f"admin:profile:edit_field:{profile_code}:phone", user_id),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Город",
+                    callback_data=codec.encode(f"admin:profile:edit_field:{profile_code}:city", user_id),
+                ),
+                InlineKeyboardButton(
+                    text="Загран паспорт",
+                    callback_data=codec.encode(f"admin:profile:edit_field:{profile_code}:passport", user_id),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Комментарий",
+                    callback_data=codec.encode(f"admin:profile:edit_field:{profile_code}:comment", user_id),
+                )
+            ],
+        ]
+    )
 
 
 def _profile_details(
@@ -3539,6 +3697,12 @@ def _get_admin_utils_state(session) -> dict:
             "awaiting_profile_comment_code": (
                 str(block.get("awaiting_profile_comment_code")) if block.get("awaiting_profile_comment_code") else None
             ),
+            "awaiting_profile_edit_code": (
+                str(block.get("awaiting_profile_edit_code")) if block.get("awaiting_profile_edit_code") else None
+            ),
+            "awaiting_profile_edit_field": (
+                str(block.get("awaiting_profile_edit_field")) if block.get("awaiting_profile_edit_field") else None
+            ),
         }
     return {
         "awaiting_payment_text": False,
@@ -3564,6 +3728,8 @@ def _get_admin_utils_state(session) -> dict:
         "awaiting_admin_add_code": False,
         "awaiting_block_reason_for_code": None,
         "awaiting_profile_comment_code": None,
+        "awaiting_profile_edit_code": None,
+        "awaiting_profile_edit_field": None,
     }
 
 
@@ -3593,6 +3759,8 @@ async def _save_admin_utils_state(container: AppContainer, session, state: dict)
         "awaiting_admin_add_code": bool(state.get("awaiting_admin_add_code")),
         "awaiting_block_reason_for_code": state.get("awaiting_block_reason_for_code"),
         "awaiting_profile_comment_code": state.get("awaiting_profile_comment_code"),
+        "awaiting_profile_edit_code": state.get("awaiting_profile_edit_code"),
+        "awaiting_profile_edit_field": state.get("awaiting_profile_edit_field"),
     }
     session.state_data = payload
     await container.session_repo.save(session)
@@ -3626,6 +3794,8 @@ def _reset_admin_utils_waiters(state: dict) -> None:
     state["awaiting_faq_media_section_id"] = None
     state["awaiting_block_reason_for_code"] = None
     state["awaiting_profile_comment_code"] = None
+    state["awaiting_profile_edit_code"] = None
+    state["awaiting_profile_edit_field"] = None
 
 
 async def _mark_blocked_bot_if_needed(container: AppContainer, profile: UserProfile, error: Exception) -> None:
