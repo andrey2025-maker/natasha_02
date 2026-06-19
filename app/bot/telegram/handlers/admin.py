@@ -17,7 +17,8 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
-from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
+from app.bot.telegram.handlers.questions_topic import ensure_dialog_topic_for_telegram_user
+from app.services.dialog_topic_profile_sync import refresh_dialog_topic_profile
 from app.bot.telegram.keyboards.profile import main_menu_keyboard
 from app.core.container import AppContainer
 from app.domain.enums import OrderStatus, Platform
@@ -893,6 +894,7 @@ def build_admin_router(container: AppContainer) -> Router:
             block_reason = await block_reason_store.get_reason(profile.code)
             profile_comment = await profile_comment_store.get_comment(profile.code)
             await message.answer(answer_text)
+            await _refresh_group_topic_profile(message.bot, container=container, profile=profile)
             await message.answer(
                 _profile_details(profile, block_reason=block_reason, profile_comment=profile_comment),
                 parse_mode="HTML",
@@ -908,6 +910,9 @@ def build_admin_router(container: AppContainer) -> Router:
             await profile_comment_store.set_comment(profile_comment_code, text)
             utils_state["awaiting_profile_comment_code"] = None
             await _save_admin_utils_state(container, session, utils_state)
+            profile = await container.profile_repo.get_by_code(profile_comment_code)
+            if profile:
+                await _refresh_group_topic_profile(message.bot, container=container, profile=profile)
             await message.answer("Комментарий профиля обновлен.")
             return
 
@@ -1066,6 +1071,9 @@ def build_admin_router(container: AppContainer) -> Router:
                 await block_reason_store.clear_reason(block_reason_code)
             utils_state["awaiting_block_reason_for_code"] = None
             await _save_admin_utils_state(container, session, utils_state)
+            profile = await container.profile_repo.get_by_code(block_reason_code)
+            if profile:
+                await _refresh_group_topic_profile(message.bot, container=container, profile=profile)
             await message.answer("Пользователь заблокирован.")
             return
 
@@ -2556,6 +2564,7 @@ def build_admin_router(container: AppContainer) -> Router:
             profile = await container.admin_service.get_profile(code)
             if not profile:
                 return
+            await _refresh_group_topic_profile(callback.message.bot, container=container, profile=profile)
             block_reason = await block_reason_store.get_reason(profile.code)
             profile_comment = await profile_comment_store.get_comment(profile.code)
             await callback.message.edit_text(
@@ -4190,6 +4199,25 @@ def _media_items_summary(items: list[dict], limit: int = 20) -> str:
     return "\n".join(lines)
 
 
+async def _refresh_group_topic_profile(
+    bot,
+    *,
+    container: AppContainer,
+    profile: UserProfile | None = None,
+    tg_user_id: int | None = None,
+) -> None:
+    target_id = tg_user_id
+    if target_id is None and profile is not None:
+        target_id = profile.telegram_user_id
+    if not target_id:
+        return
+    await refresh_dialog_topic_profile(
+        bot,
+        container=container,
+        tg_user_id=int(target_id),
+    )
+
+
 async def _create_required_group_topics(
     *,
     bot,
@@ -4237,27 +4265,6 @@ async def _create_required_group_topics(
     return logs_topic_id, payment_topic_id, questions_topic_id, buyout_topic_id
 
 
-def _build_dialog_topic_name(profile: UserProfile, selected_parts: list[str]) -> str:
-    profile_code = profile.code or "—"
-    profile_name = (profile.name or "").strip() or "без имени"
-    profile_phone = (profile.phone or "").strip() or "без телефона"
-    profile_city = (profile.city or "").strip() or "без города"
-    parts: list[str] = []
-    if "code" in selected_parts:
-        parts.append(str(profile_code))
-    if "name" in selected_parts:
-        parts.append(str(profile_name))
-    if "phone" in selected_parts:
-        parts.append(str(profile_phone))
-    if "city" in selected_parts:
-        parts.append(str(profile_city))
-    if not parts:
-        parts = [str(profile_code), str(profile_name)]
-    tg_id = int(profile.telegram_user_id or 0)
-    parts.append(f"tg:{tg_id}")
-    return " | ".join(parts)[:120]
-
-
 async def _provision_topics_for_existing_telegram_profiles(
     *,
     bot,
@@ -4269,7 +4276,8 @@ async def _provision_topics_for_existing_telegram_profiles(
     created_count = 0
     existed_count = 0
     failed_count = 0
-    selected_parts = await group_topics_store.get_topic_name_parts()
+    seen_tg_ids: set[int] = set()
+    _, logs_default_topic_id = await group_topics_store.get_tg_topic("logs")
     page = 1
     page_size = 200
     while True:
@@ -4280,6 +4288,7 @@ async def _provision_topics_for_existing_telegram_profiles(
             tg_user_id = int(profile.telegram_user_id or 0)
             if tg_user_id <= 0:
                 continue
+            seen_tg_ids.add(tg_user_id)
             existing = await topic_dialog_store.get_user_topic(
                 chat_id=chat_id,
                 platform=Platform.TELEGRAM.value,
@@ -4288,21 +4297,52 @@ async def _provision_topics_for_existing_telegram_profiles(
             if existing:
                 existed_count += 1
                 continue
-            topic_name = _build_dialog_topic_name(profile, selected_parts)
-            try:
-                created = await bot.create_forum_topic(chat_id=chat_id, name=topic_name)
-                await topic_dialog_store.set_user_topic(
-                    chat_id=chat_id,
-                    platform=Platform.TELEGRAM.value,
-                    platform_user_id=tg_user_id,
-                    topic_id=int(created.message_thread_id),
-                )
+            topic_id = await ensure_dialog_topic_for_telegram_user(
+                bot=bot,
+                chat_id=chat_id,
+                tg_user_id=tg_user_id,
+                group_topics_store=group_topics_store,
+                topic_dialog_store=topic_dialog_store,
+                profile=profile,
+                is_admin=False,
+                default_topic_id=logs_default_topic_id,
+            )
+            if topic_id:
                 created_count += 1
-            except Exception:
+            else:
                 failed_count += 1
         if len(chunk) < page_size:
             break
         page += 1
+
+    for admin_id in await container.admin_service.list_admins():
+        tg_user_id = int(admin_id)
+        if tg_user_id <= 0 or tg_user_id in seen_tg_ids:
+            continue
+        existing = await topic_dialog_store.get_user_topic(
+            chat_id=chat_id,
+            platform=Platform.TELEGRAM.value,
+            platform_user_id=tg_user_id,
+        )
+        if existing:
+            existed_count += 1
+            continue
+        profile = await container.profile_repo.get_by_platform_user(Platform.TELEGRAM, tg_user_id)
+        topic_id = await ensure_dialog_topic_for_telegram_user(
+            bot=bot,
+            chat_id=chat_id,
+            tg_user_id=tg_user_id,
+            group_topics_store=group_topics_store,
+            topic_dialog_store=topic_dialog_store,
+            profile=profile,
+            is_admin=profile is None,
+            default_topic_id=logs_default_topic_id,
+        )
+        if topic_id:
+            created_count += 1
+        else:
+            failed_count += 1
+
     return created_count, existed_count, failed_count
 
 

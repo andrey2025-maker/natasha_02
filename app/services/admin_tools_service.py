@@ -760,6 +760,34 @@ class TopicDialogStore:
         payload[key] = int(topic_id)
         await self._db.set("topic_dialog_user_topics", payload)
 
+    async def get_pinned_profile_message_id(
+        self,
+        chat_id: int,
+        platform: str,
+        platform_user_id: int,
+    ) -> int | None:
+        payload = await self._db.get("topic_dialog_pinned_profiles")
+        if not isinstance(payload, dict):
+            return None
+        raw = payload.get(self._user_key(chat_id, platform, platform_user_id))
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
+    async def set_pinned_profile_message_id(
+        self,
+        chat_id: int,
+        platform: str,
+        platform_user_id: int,
+        message_id: int,
+    ) -> None:
+        payload = await self._db.get("topic_dialog_pinned_profiles") or {}
+        payload[self._user_key(chat_id, platform, platform_user_id)] = int(message_id)
+        await self._db.set("topic_dialog_pinned_profiles", payload)
+
     async def bind_topic_message_to_user(
         self,
         chat_id: int,

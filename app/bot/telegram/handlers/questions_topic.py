@@ -16,6 +16,10 @@ from app.services.admin_tools_service import (
     QuestionsAlertStore,
     TopicDialogStore,
 )
+from app.services.dialog_topic_profile_sync import (
+    build_topic_name_from_profile,
+    refresh_dialog_topic_profile,
+)
 
 
 def build_tg_forum_message_link(chat_id: int, message_id: int, topic_id: int | None) -> str:
@@ -45,6 +49,108 @@ def processor_display_name(user) -> str:
     return escape(full_name or str(getattr(user, "id", "unknown")), quote=False)
 
 
+async def ensure_dialog_topic_for_telegram_user(
+    *,
+    bot,
+    chat_id: int,
+    tg_user_id: int,
+    group_topics_store: GroupTopicsStore,
+    topic_dialog_store: TopicDialogStore,
+    profile=None,
+    is_admin: bool = False,
+    default_topic_id: int | None = None,
+) -> int | None:
+    existing = await topic_dialog_store.get_user_topic(
+        chat_id=int(chat_id),
+        platform=Platform.TELEGRAM.value,
+        platform_user_id=int(tg_user_id),
+    )
+    if existing:
+        return int(existing)
+    selected_parts = await group_topics_store.get_topic_name_parts()
+    topic_name = build_topic_name_from_profile(
+        profile,
+        int(tg_user_id),
+        selected_parts,
+        is_admin=is_admin,
+    )
+    try:
+        created = await bot.create_forum_topic(chat_id=int(chat_id), name=topic_name)
+    except Exception:
+        return int(default_topic_id) if default_topic_id else None
+    topic_id = int(created.message_thread_id)
+    await topic_dialog_store.set_user_topic(
+        chat_id=int(chat_id),
+        platform=Platform.TELEGRAM.value,
+        platform_user_id=int(tg_user_id),
+        topic_id=topic_id,
+    )
+    return topic_id
+
+
+async def forward_message_to_dialog_topic(
+    message: Message,
+    *,
+    container: AppContainer,
+    group_topics_store: GroupTopicsStore,
+    notification_settings_store: NotificationSettingsStore,
+    topic_dialog_store: TopicDialogStore,
+    is_admin: bool = False,
+) -> tuple[int, int, int] | None:
+    if not message.from_user:
+        return None
+
+    profile = await container.profile_repo.get_by_platform_user(Platform.TELEGRAM, message.from_user.id)
+    logs_chat_id, logs_default_topic_id = await group_topics_store.get_tg_topic("logs")
+    if not logs_chat_id:
+        return None
+
+    dialog_topic_id = await ensure_dialog_topic_for_telegram_user(
+        bot=message.bot,
+        chat_id=int(logs_chat_id),
+        tg_user_id=message.from_user.id,
+        group_topics_store=group_topics_store,
+        topic_dialog_store=topic_dialog_store,
+        profile=profile,
+        is_admin=is_admin,
+        default_topic_id=logs_default_topic_id,
+    )
+    if not dialog_topic_id:
+        return None
+
+    await refresh_dialog_topic_profile(
+        message.bot,
+        container=container,
+        tg_user_id=message.from_user.id,
+        group_topics_store=group_topics_store,
+        topic_dialog_store=topic_dialog_store,
+        notification_settings_store=notification_settings_store,
+        is_admin=is_admin,
+    )
+
+    notify_kind = "button" if is_admin else "user"
+    disable_notification = await notification_settings_store.should_disable_notification(notify_kind)
+    try:
+        dialog_copy = await message.bot.copy_message(
+            chat_id=int(logs_chat_id),
+            from_chat_id=message.chat.id,
+            message_id=message.message_id,
+            message_thread_id=int(dialog_topic_id),
+            disable_notification=disable_notification,
+        )
+    except Exception:
+        return None
+
+    await topic_dialog_store.bind_topic_message_to_user(
+        chat_id=int(logs_chat_id),
+        topic_id=int(dialog_topic_id),
+        topic_message_id=int(dialog_copy.message_id),
+        platform=Platform.TELEGRAM.value,
+        platform_user_id=message.from_user.id,
+    )
+    return int(logs_chat_id), int(dialog_topic_id), int(dialog_copy.message_id)
+
+
 async def forward_idle_message_to_questions_topic(
     message: Message,
     *,
@@ -67,40 +173,23 @@ async def forward_idle_message_to_questions_topic(
             await message.answer("Передал вопрос менеджеру. Ответим в этом чате как можно скорее.")
         return
 
-    dialog_topic_id = await resolve_or_create_user_topic(
-        message=message,
-        target_chat_id=int(logs_chat_id),
-        default_topic_id=logs_default_topic_id,
+    copied = await forward_message_to_dialog_topic(
+        message,
+        container=container,
         group_topics_store=group_topics_store,
+        notification_settings_store=notification_settings_store,
         topic_dialog_store=topic_dialog_store,
-        profile=profile,
+        is_admin=False,
     )
-    if not dialog_topic_id:
+    if not copied:
         return
 
+    logs_chat_id, dialog_topic_id, dialog_message_id = copied
     disable_notification = await notification_settings_store.should_disable_notification("user")
-    try:
-        dialog_copy = await message.bot.copy_message(
-            chat_id=int(logs_chat_id),
-            from_chat_id=message.chat.id,
-            message_id=message.message_id,
-            message_thread_id=int(dialog_topic_id),
-            disable_notification=disable_notification,
-        )
-    except Exception:
-        return
-
-    await topic_dialog_store.bind_topic_message_to_user(
-        chat_id=int(logs_chat_id),
-        topic_id=int(dialog_topic_id),
-        topic_message_id=int(dialog_copy.message_id),
-        platform=Platform.TELEGRAM.value,
-        platform_user_id=message.from_user.id,
-    )
 
     dialog_link = build_tg_forum_message_link(
         chat_id=int(logs_chat_id),
-        message_id=int(dialog_copy.message_id),
+        message_id=int(dialog_message_id),
         topic_id=int(dialog_topic_id),
     )
 
@@ -126,7 +215,7 @@ async def forward_idle_message_to_questions_topic(
         questions_chat_id=int(questions_chat_id),
         dialog_chat_id=int(logs_chat_id),
         dialog_topic_id=int(dialog_topic_id),
-        dialog_message_id=int(dialog_copy.message_id),
+        dialog_message_id=int(dialog_message_id),
         platform_user_id=message.from_user.id,
     )
     keyboard = InlineKeyboardMarkup(
@@ -173,45 +262,20 @@ async def resolve_or_create_user_topic(
     group_topics_store: GroupTopicsStore,
     topic_dialog_store: TopicDialogStore,
     profile,
+    is_admin: bool = False,
 ) -> int | None:
-    existing = await topic_dialog_store.get_user_topic(
-        chat_id=target_chat_id,
-        platform=Platform.TELEGRAM.value,
-        platform_user_id=message.from_user.id if message.from_user else 0,
+    if not message.from_user:
+        return default_topic_id
+    return await ensure_dialog_topic_for_telegram_user(
+        bot=message.bot,
+        chat_id=int(target_chat_id),
+        tg_user_id=message.from_user.id,
+        group_topics_store=group_topics_store,
+        topic_dialog_store=topic_dialog_store,
+        profile=profile,
+        is_admin=is_admin,
+        default_topic_id=default_topic_id,
     )
-    if existing:
-        return existing
-    profile_code = profile.code if profile else "—"
-    profile_name = (profile.name if profile else "") or "без имени"
-    profile_phone = (profile.phone if profile else "") or "без телефона"
-    profile_city = (profile.city if profile else "") or "без города"
-    selected = await group_topics_store.get_topic_name_parts()
-    parts: list[str] = []
-    if "code" in selected:
-        parts.append(str(profile_code))
-    if "name" in selected:
-        parts.append(str(profile_name))
-    if "phone" in selected:
-        parts.append(str(profile_phone))
-    if "city" in selected:
-        parts.append(str(profile_city))
-    if not parts:
-        parts = [str(profile_code), str(profile_name)]
-    parts.append(f"tg:{message.from_user.id if message.from_user else 0}")
-    topic_name = " | ".join(parts)[:120]
-    try:
-        created = await message.bot.create_forum_topic(chat_id=target_chat_id, name=topic_name)
-    except Exception:
-        return int(default_topic_id) if default_topic_id else None
-    topic_id = int(created.message_thread_id)
-    if message.from_user:
-        await topic_dialog_store.set_user_topic(
-            chat_id=target_chat_id,
-            platform=Platform.TELEGRAM.value,
-            platform_user_id=message.from_user.id,
-            topic_id=topic_id,
-        )
-    return topic_id
 
 
 async def handle_questions_process_callback(

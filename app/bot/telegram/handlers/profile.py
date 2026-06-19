@@ -14,7 +14,11 @@ from app.domain.enums import DialogState, Platform
 from app.domain.models import OutboundMessage
 from app.services.admin_tools_service import GroupTopicsStore, NotificationSettingsStore, QuestionsAlertStore, TopicDialogStore
 from app.services.flows.profile_flow import FlowResponse
-from app.bot.telegram.handlers.questions_topic import forward_idle_message_to_questions_topic
+from app.bot.telegram.handlers.questions_topic import (
+    forward_idle_message_to_questions_topic,
+    forward_message_to_dialog_topic,
+)
+from app.services.dialog_topic_profile_sync import refresh_dialog_topic_profile
 
 
 PROFILE_BUTTONS = {"Профиль", "👤 Профиль", "Заполнить профиль"}
@@ -55,12 +59,32 @@ def build_profile_router(container: AppContainer) -> Router:
 
         text = getattr(response, "text", None)
         if not isinstance(text, str):
+            profile = getattr(response, "profile", None)
+            if profile is not None and getattr(profile, "telegram_user_id", None):
+                await refresh_dialog_topic_profile(
+                    message.bot,
+                    container=container,
+                    tg_user_id=int(profile.telegram_user_id),
+                    group_topics_store=group_topics_store,
+                    topic_dialog_store=topic_dialog_store,
+                    notification_settings_store=notification_settings_store,
+                )
             return
         kwargs = {"parse_mode": "HTML"}
         reply_markup = getattr(response, "reply_markup", None)
         if reply_markup is not None:
             kwargs["reply_markup"] = reply_markup
         await message.answer(text, **kwargs)
+        profile = getattr(response, "profile", None)
+        if profile is not None and getattr(profile, "telegram_user_id", None):
+            await refresh_dialog_topic_profile(
+                message.bot,
+                container=container,
+                tg_user_id=int(profile.telegram_user_id),
+                group_topics_store=group_topics_store,
+                topic_dialog_store=topic_dialog_store,
+                notification_settings_store=notification_settings_store,
+            )
 
     async def _dispatch_outbound(message: Message, outbound_messages: list[dict]) -> None:
         for outgoing in outbound_messages:
@@ -84,6 +108,14 @@ def build_profile_router(container: AppContainer) -> Router:
                     if profile and not profile.blocked_bot:
                         profile.blocked_bot = True
                         await container.profile_repo.save(profile)
+                        await refresh_dialog_topic_profile(
+                            message.bot,
+                            container=container,
+                            tg_user_id=target_user_id,
+                            group_topics_store=group_topics_store,
+                            topic_dialog_store=topic_dialog_store,
+                            notification_settings_store=notification_settings_store,
+                        )
                 continue
 
             await container.outbound_repo.enqueue(
@@ -229,7 +261,17 @@ def build_profile_router(container: AppContainer) -> Router:
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
         session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
-        if await container.admin_service.is_admin(message.from_user.id):
+        is_admin = await container.admin_service.is_admin(message.from_user.id)
+        if is_admin:
+            if session.state == DialogState.IDLE:
+                await forward_message_to_dialog_topic(
+                    message=message,
+                    container=container,
+                    group_topics_store=group_topics_store,
+                    notification_settings_store=notification_settings_store,
+                    topic_dialog_store=topic_dialog_store,
+                    is_admin=True,
+                )
             return
         user_key = f"tg:{message.from_user.id}"
         if not container.rate_limiter.allow_request(user_key, "<media>"):
@@ -290,6 +332,15 @@ def build_profile_router(container: AppContainer) -> Router:
                     callback_codec=callback_codec,
                     send_ack=True,
                 )
+        elif session.state == DialogState.IDLE:
+            await forward_message_to_dialog_topic(
+                message=message,
+                container=container,
+                group_topics_store=group_topics_store,
+                notification_settings_store=notification_settings_store,
+                topic_dialog_store=topic_dialog_store,
+                is_admin=True,
+            )
         if session.state == DialogState.IDLE:
             return
 
