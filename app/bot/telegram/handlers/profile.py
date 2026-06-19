@@ -14,6 +14,7 @@ from app.domain.enums import DialogState, Platform
 from app.domain.models import OutboundMessage
 from app.services.admin_tools_service import GroupTopicsStore, NotificationSettingsStore, QuestionsAlertStore, TopicDialogStore
 from app.services.flows.profile_flow import FlowResponse
+from app.bot.telegram.handlers.admin import admin_session_has_pending, clear_admin_input_states
 from app.bot.telegram.handlers.questions_topic import (
     forward_idle_message_to_questions_topic,
     forward_message_to_dialog_topic,
@@ -140,6 +141,8 @@ def build_profile_router(container: AppContainer) -> Router:
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
         session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
+        if await container.admin_service.is_admin(message.from_user.id):
+            await clear_admin_input_states(container, session)
         response = await container.profile_flow.show_profile_menu(session, other_platform_label="ВК")
         response.reply_markup = profile_menu_keyboard("ВК", message.from_user.id, callback_codec)
         await _apply_response(message, response)
@@ -314,6 +317,9 @@ def build_profile_router(container: AppContainer) -> Router:
             return
 
         session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
+        if await container.admin_service.is_admin(message.from_user.id):
+            if admin_session_has_pending(session):
+                raise SkipHandler
         user_key = f"tg:{message.from_user.id}"
         if not container.rate_limiter.allow_request(user_key, message.text):
             return

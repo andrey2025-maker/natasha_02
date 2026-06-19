@@ -18,11 +18,17 @@ from aiogram.types import (
 )
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
+from app.bot.telegram.fsm_utils import (
+    admin_utils_has_waiter,
+    fsm_prompt,
+    is_cancel_command,
+    is_navigation_command,
+)
 from app.bot.telegram.handlers.questions_topic import ensure_dialog_topic_for_telegram_user
 from app.services.dialog_topic_profile_sync import refresh_dialog_topic_profile
 from app.bot.telegram.keyboards.profile import main_menu_keyboard
 from app.core.container import AppContainer
-from app.domain.enums import OrderStatus, Platform
+from app.domain.enums import DialogState, OrderStatus, Platform
 from app.domain.models import OutboundMessage, UserProfile
 from app.services.admin_tools_service import (
     AdminProfileCommentStore,
@@ -82,6 +88,10 @@ def build_admin_router(container: AppContainer) -> Router:
         if not await _ensure_admin(message):
             await message.answer("⛔ Доступ к админ-панели только у администраторов.")
             return
+        if not message.from_user:
+            return
+        session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
+        await _clear_admin_input_states(container, session)
         user_id = message.from_user.id
         is_main = user_id == container.settings.telegram.main_admin_id
         await message.answer(
@@ -236,7 +246,7 @@ def build_admin_router(container: AppContainer) -> Router:
         state["awaiting_prohibited_text"] = False
         state["awaiting_prohibited_media"] = False
         await _save_admin_utils_state(container, session, state)
-        await message.answer("Отправьте chat_id группы, например: -1001234567890")
+        await message.answer(fsm_prompt("Отправьте chat_id группы, например: -1001234567890"))
 
     @router.message(F.text == "Создать темы")
     async def admin_group_create_topics(message: Message) -> None:
@@ -334,7 +344,7 @@ def build_admin_router(container: AppContainer) -> Router:
         state["awaiting_prohibited_text"] = False
         state["awaiting_prohibited_media"] = False
         await _save_admin_utils_state(container, session, state)
-        await message.answer("Отправьте chat_id [topic_id], например: -1001234567890 42")
+        await message.answer(fsm_prompt("Отправьте chat_id [topic_id], например: -1001234567890 42"))
 
     @router.message(F.text == "Сбросить оплаты группу")
     async def admin_payment_group_reset(message: Message) -> None:
@@ -708,6 +718,49 @@ def build_admin_router(container: AppContainer) -> Router:
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
         broadcast_state = _get_admin_broadcast_state(session)
         utils_state = _get_admin_utils_state(session)
+        orders_state = _get_admin_orders_state(session)
+        text = message.text.strip()
+
+        has_utils = admin_utils_has_waiter(utils_state)
+        has_broadcast = bool(broadcast_state.get("awaiting_payload"))
+        has_orders_edit = bool(
+            orders_state.get("edit_field")
+            or orders_state.get("bulk_field")
+            or orders_state.get("pending_field")
+        )
+        has_dialog_fsm = session.state != DialogState.IDLE
+
+        if is_cancel_command(text):
+            if not (has_utils or has_broadcast or has_orders_edit or has_dialog_fsm):
+                raise SkipHandler
+            await _clear_admin_input_states(container, session)
+            if has_dialog_fsm:
+                await container.profile_flow.cancel_to_idle(session)
+            is_main = message.from_user.id == container.settings.telegram.main_admin_id
+            await message.answer(
+                "Ввод отменён.",
+                reply_markup=main_menu_keyboard(include_admin=is_main),
+            )
+            return
+
+        if is_navigation_command(text) and (has_utils or has_broadcast or has_orders_edit):
+            await _clear_admin_input_states(container, session)
+            if text in {"Профиль", "👤 Профиль"}:
+                await _open_user_profile_from_admin(message, container, callback_codec)
+                return
+            await message.answer("Предыдущий ввод отменён. Повторите нажатие кнопки.")
+            return
+
+        if not has_utils and not has_broadcast:
+            edit_order = orders_state.get("edit_order")
+            edit_field = orders_state.get("edit_field")
+            bulk_field = orders_state.get("bulk_field")
+            if not edit_order or not edit_field:
+                raise SkipHandler
+
+        edit_order = orders_state.get("edit_order")
+        edit_field = orders_state.get("edit_field")
+        bulk_field = orders_state.get("bulk_field")
 
         if utils_state.get("awaiting_payment_text"):
             new_text = message.text.strip()
@@ -1081,7 +1134,7 @@ def build_admin_router(container: AppContainer) -> Router:
         if utils_state.get("awaiting_backup_target"):
             parts = message.text.split()
             if len(parts) != 1:
-                await message.answer("Формат: chat_id, например: -1001234567890")
+                await message.answer(fsm_prompt("Формат: chat_id, например: -1001234567890"))
                 return
             try:
                 chat_id = int(parts[0])
@@ -1129,7 +1182,7 @@ def build_admin_router(container: AppContainer) -> Router:
         if utils_state.get("awaiting_payment_review_target"):
             parts = message.text.split()
             if len(parts) not in {1, 2}:
-                await message.answer("Формат: chat_id [topic_id], например: -1001234567890 42")
+                await message.answer(fsm_prompt("Формат: chat_id [topic_id], например: -1001234567890 42"))
                 return
             try:
                 chat_id = int(parts[0])
@@ -1905,7 +1958,7 @@ def build_admin_router(container: AppContainer) -> Router:
                 state["awaiting_backup_target"] = True
                 await _save_admin_utils_state(container, session, state)
                 await callback.answer()
-                await callback.message.answer("Отправьте chat_id группы, например: -1001234567890")
+                await callback.message.answer(fsm_prompt("Отправьте chat_id группы, например: -1001234567890"))
                 return
             if utils_action == "group:notifications":
                 settings = await notification_settings_store.get_settings()
@@ -2052,9 +2105,11 @@ def build_admin_router(container: AppContainer) -> Router:
             vk_count = count_targets_for_platform(profiles, Platform.VK)
             await callback.answer()
             await callback.message.answer(
-                "Аудитория выбрана.\n"
-                f"Получатели: TG {tg_count}, VK {vk_count}\n"
-                "Теперь отправьте текст рассылки одним сообщением."
+                fsm_prompt(
+                    "Аудитория выбрана.\n"
+                    f"Получатели: TG {tg_count}, VK {vk_count}\n"
+                    "Теперь отправьте текст рассылки одним сообщением."
+                )
             )
             return
 
@@ -4109,6 +4164,52 @@ async def _save_admin_utils_state(container: AppContainer, session, state: dict)
     }
     session.state_data = payload
     await container.session_repo.save(session)
+
+
+def admin_session_has_pending(session) -> bool:
+    if admin_utils_has_waiter(_get_admin_utils_state(session)):
+        return True
+    if _get_admin_broadcast_state(session).get("awaiting_payload"):
+        return True
+    orders_state = _get_admin_orders_state(session)
+    if orders_state.get("edit_field") or orders_state.get("bulk_field") or orders_state.get("pending_field"):
+        return True
+    return False
+
+
+async def clear_admin_input_states(container: AppContainer, session) -> None:
+    utils_state = _get_admin_utils_state(session)
+    _reset_admin_utils_waiters(utils_state)
+    await _save_admin_utils_state(container, session, utils_state)
+    broadcast_state = _get_admin_broadcast_state(session)
+    broadcast_state["awaiting_payload"] = False
+    broadcast_state["audience"] = None
+    await _save_admin_broadcast_state(container, session, broadcast_state)
+    orders_state = _get_admin_orders_state(session)
+    orders_state["edit_order"] = None
+    orders_state["edit_field"] = None
+    orders_state["bulk_field"] = None
+    orders_state["pending_field"] = None
+    orders_state["pending_value"] = None
+    await _save_admin_orders_state(container, session, orders_state)
+
+
+async def _clear_admin_input_states(container: AppContainer, session) -> None:
+    await clear_admin_input_states(container, session)
+
+
+async def _open_user_profile_from_admin(message: Message, container: AppContainer, codec: CallbackCodec) -> None:
+    from app.bot.telegram.keyboards.profile import profile_menu_keyboard
+
+    if not message.from_user:
+        return
+    session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
+    response = await container.profile_flow.show_profile_menu(session, other_platform_label="ВК")
+    await message.answer(
+        response.text,
+        parse_mode="HTML",
+        reply_markup=profile_menu_keyboard("ВК", message.from_user.id, codec),
+    )
 
 
 def _reset_admin_utils_waiters(state: dict) -> None:

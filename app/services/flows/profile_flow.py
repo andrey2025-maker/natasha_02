@@ -16,6 +16,7 @@ from app.services.sync_service import (
 )
 from app.storage.interfaces import SessionRepository, UserProfileRepository
 from app.bot.telegram.callbacks import CallbackCodec
+from app.bot.telegram.fsm_utils import fsm_prompt
 from app.bot.texts import messages as msg
 
 
@@ -60,6 +61,11 @@ class ProfileFlowService:
         )
         return await self._sessions.save(session)
 
+    async def cancel_to_idle(self, session: UserSession) -> None:
+        session.state = DialogState.IDLE
+        session.state_data = _keep_prefs(session.state_data, {})
+        await self._sessions.save(session)
+
     async def show_profile_menu(self, session: UserSession, other_platform_label: str) -> FlowResponse:
         profile = await self._profiles.get_by_platform_user(session.platform, session.platform_user_id)
         if profile and profile.name:
@@ -82,14 +88,14 @@ class ProfileFlowService:
         session.state = DialogState.PROFILE_FILL_NAME
         session.state_data = _keep_prefs(session.state_data, {})
         await self._sessions.save(session)
-        return FlowResponse(text=msg.ask_name(), state=session.state, state_data=session.state_data)
+        return FlowResponse(text=fsm_prompt(msg.ask_name()), state=session.state, state_data=session.state_data)
 
     async def start_sync_with_other_platform(self, session: UserSession) -> FlowResponse:
         session.state = DialogState.SYNC_ENTER_CODE
         session.state_data = _keep_prefs(session.state_data, {})
         await self._sessions.save(session)
         return FlowResponse(
-            text=msg.sync_enter_profile_code(),
+            text=fsm_prompt(msg.sync_enter_profile_code()),
             state=session.state,
             state_data=session.state_data,
         )
@@ -186,14 +192,14 @@ class ProfileFlowService:
             session.state = DialogState.PROFILE_FILL_PHONE
             session.state_data = data
             await self._sessions.save(session)
-            return FlowResponse(text=msg.ask_phone(data["name"]), state=session.state, state_data=data)
+            return FlowResponse(text=fsm_prompt(msg.ask_phone(data["name"])), state=session.state, state_data=data)
 
         if state == DialogState.PROFILE_FILL_PHONE:
             data["phone"] = text.strip()
             session.state = DialogState.PROFILE_FILL_CITY
             session.state_data = data
             await self._sessions.save(session)
-            return FlowResponse(text=msg.ask_city(data["name"], data["phone"]), state=session.state, state_data=data)
+            return FlowResponse(text=fsm_prompt(msg.ask_city(data["name"], data["phone"])), state=session.state, state_data=data)
 
         if state == DialogState.PROFILE_FILL_CITY:
             data["city"] = text.strip()
@@ -302,18 +308,18 @@ class ProfileFlowService:
         if action == "edit_name":
             session.state = DialogState.PROFILE_EDIT_NAME
             await self._sessions.save(session)
-            return FlowResponse(text=msg.ask_name(), state=session.state, state_data=data)
+            return FlowResponse(text=fsm_prompt(msg.ask_name()), state=session.state, state_data=data)
 
         if action == "edit_phone":
             session.state = DialogState.PROFILE_EDIT_PHONE
             await self._sessions.save(session)
-            return FlowResponse(text=msg.ask_phone(data.get("name", "")), state=session.state, state_data=data)
+            return FlowResponse(text=fsm_prompt(msg.ask_phone(data.get("name", ""))), state=session.state, state_data=data)
 
         if action == "edit_city":
             session.state = DialogState.PROFILE_EDIT_CITY
             await self._sessions.save(session)
             return FlowResponse(
-                text=msg.ask_city(data.get("name", ""), data.get("phone", "")),
+                text=fsm_prompt(msg.ask_city(data.get("name", ""), data.get("phone", ""))),
                 state=session.state,
                 state_data=data,
             )
@@ -338,7 +344,7 @@ class ProfileFlowService:
         if action == "has_code_yes":
             session.state = DialogState.PROFILE_ENTER_CODE
             await self._sessions.save(session)
-            return FlowResponse(text=msg.enter_existing_code(), state=session.state, state_data=data)
+            return FlowResponse(text=fsm_prompt(msg.enter_existing_code()), state=session.state, state_data=data)
 
         if action == "has_code_no":
             code = await self._codes.allocate_for_new_user()
@@ -380,7 +386,7 @@ class ProfileFlowService:
         if action == "code_fix":
             session.state = DialogState.PROFILE_ENTER_CODE
             await self._sessions.save(session)
-            return FlowResponse(text=msg.enter_existing_code(), state=session.state, state_data=data)
+            return FlowResponse(text=fsm_prompt(msg.enter_existing_code()), state=session.state, state_data=data)
 
         if action in {"passport_yes", "passport_no"}:
             data["has_passport"] = action == "passport_yes"

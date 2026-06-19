@@ -5,6 +5,7 @@ from datetime import datetime
 from html import escape
 from urllib.parse import urlparse
 
+from app.bot.telegram.fsm_utils import fsm_prompt
 from app.domain.enums import DeliveryFlowType, DialogState, OrderStatus, Platform
 from app.domain.models import BuyoutOrder, OrderMediaItem, OrderStatusHistoryItem, UserProfile, UserSession
 from app.services.user_preferences_store import UserPreferencesStore
@@ -45,7 +46,7 @@ class BuyoutFlowService:
         session.state_data = self._merge_preferences(session.state_data, self._get_preferences(session))
         await self._sessions.save(session)
         return BuyoutFlowResponse(
-            text=(
+            text=fsm_prompt(
                 "💰 <b>Заказать выкуп товара</b>\n"
                 "Для заказа выкупа отправьте <b>скриншот</b> товара с выбранными "
                 "<b>цветом</b>, <b>размером</b> и <b>количеством</b>.\n"
