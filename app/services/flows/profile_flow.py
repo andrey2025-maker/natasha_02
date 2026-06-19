@@ -68,7 +68,7 @@ class ProfileFlowService:
 
     async def show_profile_menu(self, session: UserSession, other_platform_label: str) -> FlowResponse:
         profile = await self._profiles.get_by_platform_user(session.platform, session.platform_user_id)
-        if profile and profile.name:
+        if profile and profile.is_filled:
             text = msg.profile_summary(profile)
         else:
             text = msg.profile_intro()

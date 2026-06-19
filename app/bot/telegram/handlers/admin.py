@@ -215,7 +215,7 @@ def build_admin_router(container: AppContainer) -> Router:
             f"VK logs peer_id={vk_logs_peer_id or 'не задан'}\n\n"
             "Нажмите «Задать группу» и отправьте chat_id, например:\n"
             "<code>-1001234567890</code>\n\n"
-            "После сохранения бот автоматически создаст темы: логи, оплата, вопросы, выкуп.",
+            "После сохранения бот автоматически создаст темы: логи, оплата, вопросы, Выкупы.",
             parse_mode="HTML",
         )
 
@@ -281,7 +281,7 @@ def build_admin_router(container: AppContainer) -> Router:
             f"- логи: {logs_topic_id}\n"
             f"- оплата: {payment_topic_id}\n"
             f"- вопросы: {questions_topic_id}\n"
-            f"- выкуп: {buyout_topic_id}\n\n"
+            f"- Выкупы: {buyout_topic_id}\n\n"
             "Диалоги пользователей:\n"
             f"- создано тем: {created_count}\n"
             f"- уже существовали: {existed_count}\n"
@@ -934,11 +934,36 @@ def build_admin_router(container: AppContainer) -> Router:
                 answer_text = "Поле «Загран паспорт» обновлено."
             elif profile_edit_field == "comment":
                 if value == "-":
-                    await profile_comment_store.clear_comment(profile_edit_code)
+                    await profile_comment_store.set_comment(profile_edit_code, "")
                     answer_text = "Комментарий очищен."
                 else:
                     await profile_comment_store.set_comment(profile_edit_code, value)
                     answer_text = "Комментарий обновлен."
+            elif profile_edit_field == "code":
+                new_code = _normalize_profile_code(value)
+                if not new_code:
+                    await message.answer("Код должен содержать только цифры. Пример: 016")
+                    return
+                if new_code == profile.code:
+                    await message.answer("Новый код совпадает с текущим.")
+                    return
+                if await container.profile_repo.is_code_taken(new_code):
+                    await message.answer(f"Код <b>{_h(new_code)}</b> уже занят другим профилем.", parse_mode="HTML")
+                    return
+                if await container.profile_repo.is_code_reserved(new_code):
+                    await message.answer(f"Код <b>{_h(new_code)}</b> находится в резерве.", parse_mode="HTML")
+                    return
+                old_code = profile.code
+                await _migrate_profile_code_metadata(
+                    old_code,
+                    new_code,
+                    container=container,
+                    block_reason_store=block_reason_store,
+                    profile_comment_store=profile_comment_store,
+                )
+                profile.code = new_code
+                await container.profile_repo.save(profile)
+                answer_text = f"Код обновлён: {old_code} → {new_code}."
             else:
                 await message.answer("Неизвестное поле.")
                 return
@@ -1171,7 +1196,7 @@ def build_admin_router(container: AppContainer) -> Router:
                 f"- логи: {logs_topic_id}\n"
                 f"- оплата: {payment_topic_id}\n"
                 f"- вопросы: {questions_topic_id}\n"
-                f"- выкуп: {buyout_topic_id}\n\n"
+                f"- Выкупы: {buyout_topic_id}\n\n"
                 "Диалоги пользователей:\n"
                 f"- создано тем: {created_count}\n"
                 f"- уже существовали: {existed_count}\n"
@@ -2390,7 +2415,7 @@ def build_admin_router(container: AppContainer) -> Router:
                 return
             code = parts[3]
             field = parts[4]
-            if field not in {"name", "phone", "city", "passport", "comment"}:
+            if field not in {"name", "phone", "city", "passport", "comment", "code"}:
                 await callback.answer("Неизвестное поле", show_alert=True)
                 return
             profile = await container.admin_service.get_profile(code)
@@ -2409,10 +2434,16 @@ def build_admin_router(container: AppContainer) -> Router:
                 "city": "Город",
                 "passport": "Загран паспорт",
                 "comment": "Комментарий",
+                "code": "Код",
             }[field]
-            hint = "Введите Да/Нет." if field == "passport" else "Отправьте новое значение."
+            if field == "passport":
+                hint = "Введите Да/Нет."
+            elif field == "code":
+                hint = "Отправьте новый числовой код. Пример: 016"
+            else:
+                hint = "Отправьте новое значение."
             await callback.answer()
-            await callback.message.answer(f"Редактирование поля «{field_title}» для кода {code}.\n{hint}")
+            await callback.message.answer(fsm_prompt(f"Редактирование поля «{field_title}» для кода {code}.\n{hint}"))
             return
 
         if action.startswith("admin:profile:comment:"):
@@ -2990,6 +3021,10 @@ def _profile_actions_keyboard(profile: UserProfile, user_id: int, codec: Callbac
     rows = [
         [
             InlineKeyboardButton(
+                text="🆔 Код",
+                callback_data=codec.encode(f"admin:profile:edit_field:{profile.code}:code", user_id),
+            ),
+            InlineKeyboardButton(
                 text="👤 Имя",
                 callback_data=codec.encode(f"admin:profile:edit_field:{profile.code}:name", user_id),
             ),
@@ -2997,12 +3032,12 @@ def _profile_actions_keyboard(profile: UserProfile, user_id: int, codec: Callbac
                 text="📞 Тел",
                 callback_data=codec.encode(f"admin:profile:edit_field:{profile.code}:phone", user_id),
             ),
+        ],
+        [
             InlineKeyboardButton(
                 text="🏙 Город",
                 callback_data=codec.encode(f"admin:profile:edit_field:{profile.code}:city", user_id),
             ),
-        ],
-        [
             InlineKeyboardButton(
                 text="🌍 Загран",
                 callback_data=codec.encode(f"admin:profile:edit_field:{profile.code}:passport", user_id),
@@ -3021,6 +3056,10 @@ def _profile_edit_fields_keyboard(profile_code: str, user_id: int, codec: Callba
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
+                InlineKeyboardButton(
+                    text="Код",
+                    callback_data=codec.encode(f"admin:profile:edit_field:{profile_code}:code", user_id),
+                ),
                 InlineKeyboardButton(
                     text="Имя",
                     callback_data=codec.encode(f"admin:profile:edit_field:{profile_code}:name", user_id),
@@ -3048,6 +3087,34 @@ def _profile_edit_fields_keyboard(profile_code: str, user_id: int, codec: Callba
             ],
         ]
     )
+
+
+def _normalize_profile_code(raw: str) -> str | None:
+    stripped = raw.strip()
+    if not stripped.isdigit():
+        return None
+    return stripped.zfill(3)
+
+
+async def _migrate_profile_code_metadata(
+    old_code: str,
+    new_code: str,
+    *,
+    container: AppContainer,
+    block_reason_store: BlockReasonStore,
+    profile_comment_store: AdminProfileCommentStore,
+) -> None:
+    if old_code == new_code:
+        return
+    block_reason = await block_reason_store.get_reason(old_code)
+    if block_reason:
+        await block_reason_store.set_reason(new_code, block_reason)
+        await block_reason_store.clear_reason(old_code)
+    comment = await profile_comment_store.get_comment(old_code)
+    if comment:
+        await profile_comment_store.set_comment(new_code, comment)
+        await profile_comment_store.set_comment(old_code, "")
+    await container.sync_repo.rename_active_profile_code(old_code, new_code)
 
 
 def _profile_details(
@@ -4208,7 +4275,7 @@ async def _open_user_profile_from_admin(message: Message, container: AppContaine
     await message.answer(
         response.text,
         parse_mode="HTML",
-        reply_markup=profile_menu_keyboard("ВК", message.from_user.id, codec),
+        reply_markup=profile_menu_keyboard("ВК", message.from_user.id, codec, profile=response.profile),
     )
 
 
@@ -4328,35 +4395,27 @@ async def _create_required_group_topics(
     backup_service: BackupService,
     payment_target_store: PaymentReviewTargetStore,
 ) -> tuple[int, int, int, int] | None:
-    logs_chat_id, logs_topic_id = await group_topics_store.get_tg_topic("logs")
-    payment_chat_id, payment_topic_id = await group_topics_store.get_tg_topic("payment")
-    questions_chat_id, questions_topic_id = await group_topics_store.get_tg_topic("questions")
-    buyout_chat_id, buyout_topic_id = await group_topics_store.get_tg_topic("buyout")
-    if (
-        int(logs_chat_id or 0) == int(chat_id)
-        and int(payment_chat_id or 0) == int(chat_id)
-        and int(questions_chat_id or 0) == int(chat_id)
-        and int(buyout_chat_id or 0) == int(chat_id)
-        and logs_topic_id
-        and payment_topic_id
-        and questions_topic_id
-        and buyout_topic_id
-    ):
-        await backup_service.set_backup_target(chat_id=chat_id, topic_id=int(logs_topic_id))
-        await payment_target_store.set_target(chat_id=chat_id, topic_id=int(payment_topic_id))
-        return int(logs_topic_id), int(payment_topic_id), int(questions_topic_id), int(buyout_topic_id)
+    await group_topics_store.set_tg_chat_id(chat_id)
+    stored_chat_id, logs_topic_id = await group_topics_store.get_tg_topic("logs")
+    _, payment_topic_id = await group_topics_store.get_tg_topic("payment")
+    _, questions_topic_id = await group_topics_store.get_tg_topic("questions")
+    _, buyout_topic_id = await group_topics_store.get_tg_topic("buyout")
+    same_group = int(stored_chat_id or 0) == int(chat_id)
+
+    async def _ensure_topic(existing_id: int | None, title: str) -> int:
+        if same_group and existing_id:
+            return int(existing_id)
+        created = await bot.create_forum_topic(chat_id=chat_id, name=title)
+        return int(created.message_thread_id)
+
     try:
-        topic_logs = await bot.create_forum_topic(chat_id=chat_id, name="логи")
-        topic_payment = await bot.create_forum_topic(chat_id=chat_id, name="оплата")
-        topic_questions = await bot.create_forum_topic(chat_id=chat_id, name="вопросы")
-        topic_buyout = await bot.create_forum_topic(chat_id=chat_id, name="выкуп")
+        logs_topic_id = await _ensure_topic(logs_topic_id if same_group else None, "логи")
+        payment_topic_id = await _ensure_topic(payment_topic_id if same_group else None, "оплата")
+        questions_topic_id = await _ensure_topic(questions_topic_id if same_group else None, "вопросы")
+        buyout_topic_id = await _ensure_topic(buyout_topic_id if same_group else None, "Выкупы")
     except Exception:
         return None
-    logs_topic_id = int(topic_logs.message_thread_id)
-    payment_topic_id = int(topic_payment.message_thread_id)
-    questions_topic_id = int(topic_questions.message_thread_id)
-    buyout_topic_id = int(topic_buyout.message_thread_id)
-    await group_topics_store.set_tg_chat_id(chat_id)
+
     await group_topics_store.set_tg_topics(
         logs_topic_id=logs_topic_id,
         payment_topic_id=payment_topic_id,

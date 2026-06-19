@@ -135,7 +135,7 @@ async def run_vk_bot(container: AppContainer) -> None:
         if text == "Профиль":
             response = await container.profile_flow.show_profile_menu(session, other_platform_label="ТГ")
             await _dispatch_outbound_vk(container, tg_bot, response)
-            await message.answer(_vk_text(response.text), keyboard=profile_menu_keyboard())
+            await message.answer(_vk_text(response.text), keyboard=profile_menu_keyboard(response.profile))
             return
 
         if text == "Вопросы":
@@ -192,11 +192,19 @@ async def run_vk_bot(container: AppContainer) -> None:
             return
 
         if text == "Заполнить профиль":
+            if vk_profile and vk_profile.is_filled:
+                response = await container.profile_flow.show_profile_menu(session, other_platform_label="ТГ")
+                await message.answer(_vk_text(response.text), keyboard=profile_menu_keyboard(response.profile))
+                return
             response = await container.profile_flow.start_fill(session)
             await message.answer(_vk_text(response.text))
             return
 
         if text == "Есть профиль ТГ":
+            if vk_profile and vk_profile.is_filled:
+                response = await container.profile_flow.show_profile_menu(session, other_platform_label="ТГ")
+                await message.answer(_vk_text(response.text), keyboard=profile_menu_keyboard(response.profile))
+                return
             response = await container.profile_flow.start_sync_with_other_platform(session)
             await message.answer(_vk_text(response.text))
             return

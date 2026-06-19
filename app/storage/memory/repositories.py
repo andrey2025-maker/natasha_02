@@ -54,6 +54,10 @@ class InMemoryUserProfileRepository(UserProfileRepository):
         if not stored.id:
             stored.id = self._next_id
             self._next_id += 1
+        else:
+            previous = self._profiles.get(stored.id)
+            if previous and previous.code != stored.code:
+                self._by_code.pop(previous.code, None)
         self._profiles[stored.id] = stored
         self._by_code[stored.code] = stored.id
         return deepcopy(stored)
@@ -156,6 +160,15 @@ class InMemorySyncRepository(SyncRepository):
 
     async def mark_confirmed(self, sync_request_id: int) -> None:
         self._requests[sync_request_id].state = SyncState.CONFIRMED
+
+    async def rename_active_profile_code(self, old_code: str, new_code: str) -> int:
+        now = datetime.utcnow()
+        updated = 0
+        for req in self._requests.values():
+            if req.profile_code == old_code and req.state == SyncState.PENDING and req.expires_at > now:
+                req.profile_code = new_code
+                updated += 1
+        return updated
 
 
 class InMemoryCodeReserveRepository(CodeReserveRepository):

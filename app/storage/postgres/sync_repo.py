@@ -85,3 +85,21 @@ class PostgresSyncRepository(SyncRepository):
                 "UPDATE sync_requests SET state = 'confirmed' WHERE id = $1",
                 sync_request_id,
             )
+
+    async def rename_active_profile_code(self, old_code: str, new_code: str) -> int:
+        async with self._pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE sync_requests
+                SET profile_code = $2
+                WHERE profile_code = $1
+                  AND state = 'pending'
+                  AND expires_at > NOW()
+                """,
+                old_code,
+                new_code,
+            )
+        try:
+            return int(str(result).split()[-1])
+        except (TypeError, ValueError):
+            return 0

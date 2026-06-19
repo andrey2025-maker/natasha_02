@@ -609,12 +609,12 @@ def build_buyout_router(container: AppContainer) -> Router:
         if not await container.admin_service.is_admin(message.from_user.id):
             return
 
-        target_chat_id, target_topic_id = await payment_target_store.get_target()
-        if not target_chat_id:
-            target_chat_id, target_topic_id = await group_topics_store.get_tg_topic("payment")
-        if not target_chat_id or int(message.chat.id) != int(target_chat_id):
+        target_chat_id, target_topic_id = await group_topics_store.get_tg_topic("buyout")
+        if not target_chat_id or not target_topic_id:
             return
-        if target_topic_id and message.message_thread_id != int(target_topic_id):
+        if int(message.chat.id) != int(target_chat_id):
+            return
+        if message.message_thread_id != int(target_topic_id):
             return
 
         source_text = message.reply_to_message.text or message.reply_to_message.caption or ""
@@ -704,13 +704,17 @@ def build_buyout_router(container: AppContainer) -> Router:
         response = await container.buyout_flow.handle_text(session, message.text)
         await _reply(message, response)
         if previous_state == DialogState.BUYOUT_WAIT_DETAILS and response.state == DialogState.BUYOUT_ADD_MORE:
-            await _notify_new_buyout_order(
+            sent_to_group = await _notify_new_buyout_order(
                 message=message,
                 container=container,
-                payment_target_store=payment_target_store,
                 group_topics_store=group_topics_store,
                 notification_settings_store=notification_settings_store,
             )
+            if not sent_to_group:
+                await message.answer(
+                    "Заявка сохранена, но не удалось отправить её в группу. "
+                    "Админу: Утилиты → Группа → создайте темы (нужна «Выкупы»)."
+                )
 
     return router
 
@@ -787,9 +791,7 @@ async def _send_payment_review_to_admins(
             )
         except Exception:
             continue
-    target_chat_id, target_topic_id = await group_topics_store.get_tg_topic("buyout")
-    if not target_chat_id:
-        target_chat_id, target_topic_id = await payment_target_store.get_target()
+    target_chat_id, target_topic_id = await payment_target_store.get_target()
     if not target_chat_id:
         target_chat_id, target_topic_id = await group_topics_store.get_tg_topic("payment")
     if target_chat_id:
@@ -892,27 +894,24 @@ async def _notify_user_status_changed_by_bot(
 async def _notify_new_buyout_order(
     message: Message,
     container: AppContainer,
-    payment_target_store: PaymentReviewTargetStore,
     group_topics_store: GroupTopicsStore,
     notification_settings_store: NotificationSettingsStore,
-) -> None:
+) -> bool:
     if not message.from_user:
-        return
+        return False
     profile = await container.profile_repo.get_by_platform_user(Platform.TELEGRAM, message.from_user.id)
     if not profile:
-        return
+        return False
     orders = await container.buyout_repo.list_for_user(profile.id, limit=1, offset=0)
     if not orders:
-        return
+        return False
     order = orders[0]
-    target_chat_id, target_topic_id = await payment_target_store.get_target()
-    if not target_chat_id:
-        target_chat_id, target_topic_id = await group_topics_store.get_tg_topic("payment")
-    if not target_chat_id:
-        return
+    target_chat_id, target_topic_id = await group_topics_store.get_tg_topic("buyout")
+    if not target_chat_id or not target_topic_id:
+        return False
     text = (
-        f"🆕 <b>Новый выкуп №{_h(order.order_number)}</b>\n"
-        "Статус: <b>Ожидание</b>\n"
+        f"🆕 <b>Выкуп №{_h(order.order_number)}</b>\n"
+        "Статус: <b>⏳ Ожидание</b>\n"
         f"Профиль: <b>{_h(profile.code)}</b> ({_h(profile.name or 'без имени')})\n"
         f"TG ID: <code>{message.from_user.id}</code>\n"
         f"Ссылка: {_h(order.product_url)}\n"
@@ -926,7 +925,7 @@ async def _notify_new_buyout_order(
             chat_id=target_chat_id,
             text=text,
             parse_mode="HTML",
-            message_thread_id=target_topic_id,
+            message_thread_id=int(target_topic_id),
             disable_notification=disable_notification,
         )
         if order.media_storage_chat_id and order.media_storage_message_id:
@@ -935,13 +934,14 @@ async def _notify_new_buyout_order(
                     chat_id=target_chat_id,
                     from_chat_id=int(order.media_storage_chat_id),
                     message_id=int(order.media_storage_message_id),
-                    message_thread_id=target_topic_id,
+                    message_thread_id=int(target_topic_id),
                     reply_to_message_id=sent.message_id,
                 )
             except Exception:
                 pass
+        return True
     except Exception:
-        return
+        return False
 
 
 def _status_title(status: OrderStatus) -> str:

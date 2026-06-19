@@ -92,6 +92,10 @@ class SyncRepository(ABC):
     async def mark_confirmed(self, sync_request_id: int) -> None:
         raise NotImplementedError
 
+    @abstractmethod
+    async def rename_active_profile_code(self, old_code: str, new_code: str) -> int:
+        raise NotImplementedError
+
 
 class SessionRepository(ABC):
     @abstractmethod

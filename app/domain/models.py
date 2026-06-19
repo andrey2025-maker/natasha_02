@@ -29,6 +29,15 @@ class UserProfile:
     created_at: datetime = field(default_factory=datetime.utcnow)
     last_activity_at: datetime = field(default_factory=datetime.utcnow)
 
+    @property
+    def is_filled(self) -> bool:
+        return bool(
+            (self.name or "").strip()
+            and (self.phone or "").strip()
+            and (self.city or "").strip()
+            and (self.code or "").strip()
+        )
+
 
 @dataclass(slots=True)
 class BuyoutOrder:

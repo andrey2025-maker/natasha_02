@@ -144,7 +144,12 @@ def build_profile_router(container: AppContainer) -> Router:
         if await container.admin_service.is_admin(message.from_user.id):
             await clear_admin_input_states(container, session)
         response = await container.profile_flow.show_profile_menu(session, other_platform_label="ВК")
-        response.reply_markup = profile_menu_keyboard("ВК", message.from_user.id, callback_codec)
+        response.reply_markup = profile_menu_keyboard(
+            "ВК",
+            message.from_user.id,
+            callback_codec,
+            profile=response.profile,
+        )
         await _apply_response(message, response)
 
     @router.message(F.text == "Заполнить профиль")
@@ -153,6 +158,13 @@ def build_profile_router(container: AppContainer) -> Router:
             return
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
+            return
+        profile = await container.profile_repo.get_by_platform_user(platform, message.from_user.id)
+        if profile and profile.is_filled:
+            session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
+            response = await container.profile_flow.show_profile_menu(session, other_platform_label="ВК")
+            response.reply_markup = profile_menu_keyboard("ВК", message.from_user.id, callback_codec, profile=profile)
+            await _apply_response(message, response)
             return
         session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
         response = await container.profile_flow.start_fill(session)
@@ -189,6 +201,13 @@ def build_profile_router(container: AppContainer) -> Router:
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
+        profile = await container.profile_repo.get_by_platform_user(platform, message.from_user.id)
+        if profile and profile.is_filled:
+            session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
+            response = await container.profile_flow.show_profile_menu(session, other_platform_label="ВК")
+            response.reply_markup = profile_menu_keyboard("ВК", message.from_user.id, callback_codec, profile=profile)
+            await _apply_response(message, response)
+            return
         session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
         response = await container.profile_flow.start_sync_with_other_platform(session)
         await _apply_response(message, response)
@@ -208,11 +227,35 @@ def build_profile_router(container: AppContainer) -> Router:
             raise SkipHandler
         session = await container.profile_flow.get_or_create_session(platform, callback.from_user.id)
         if action == "profile:start_fill":
+            profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
+            if profile and profile.is_filled:
+                response = await container.profile_flow.show_profile_menu(session, other_platform_label="ВК")
+                response.reply_markup = profile_menu_keyboard(
+                    "ВК",
+                    callback.from_user.id,
+                    callback_codec,
+                    profile=profile,
+                )
+                await callback.answer("Профиль уже заполнен.")
+                await _apply_response(callback.message, response)
+                return
             response = await container.profile_flow.start_fill(session)
             await callback.answer()
             await _apply_response(callback.message, response)
             return
         if action == "profile:start_sync":
+            profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
+            if profile and profile.is_filled:
+                response = await container.profile_flow.show_profile_menu(session, other_platform_label="ВК")
+                response.reply_markup = profile_menu_keyboard(
+                    "ВК",
+                    callback.from_user.id,
+                    callback_codec,
+                    profile=profile,
+                )
+                await callback.answer("Профиль уже заполнен.")
+                await _apply_response(callback.message, response)
+                return
             response = await container.profile_flow.start_sync_with_other_platform(session)
             await callback.answer()
             await _apply_response(callback.message, response)
@@ -328,6 +371,13 @@ def build_profile_router(container: AppContainer) -> Router:
             return
 
         session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
+        if session.state in {
+            DialogState.BUYOUT_WAIT_MEDIA,
+            DialogState.BUYOUT_WAIT_LINK,
+            DialogState.BUYOUT_WAIT_DETAILS,
+            DialogState.BUYOUT_ADD_MORE,
+        }:
+            raise SkipHandler
         if await container.admin_service.is_admin(message.from_user.id):
             if admin_session_has_pending(session):
                 raise SkipHandler

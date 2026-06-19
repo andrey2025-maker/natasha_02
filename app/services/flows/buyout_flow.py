@@ -48,9 +48,10 @@ class BuyoutFlowService:
         return BuyoutFlowResponse(
             text=fsm_prompt(
                 "💰 <b>Заказать выкуп товара</b>\n"
-                "Для заказа выкупа отправьте <b>скриншот</b> товара с выбранными "
+                "Для заказа выкупа вам нужно заполнить данные о товаре.\n"
+                "Сначала отправьте <b>скриншот</b> товара с выбранными "
                 "<b>цветом</b>, <b>размером</b> и <b>количеством</b>.\n"
-                "Можно отправить фото, видео или гиф."
+                "Можно отправить фото, видео, гиф или несколько файлов."
             ),
             state=session.state,
             state_data={},
@@ -97,7 +98,7 @@ class BuyoutFlowService:
         session.state_data = state_data
         await self._sessions.save(session)
         return BuyoutFlowResponse(
-            text="Отправьте <b>ссылку на товар</b>:",
+            text=fsm_prompt("Отправьте <b>ссылку на товар</b>:"),
             state=session.state,
             state_data=state_data,
         )
@@ -113,7 +114,7 @@ class BuyoutFlowService:
             session.state_data = data
             await self._sessions.save(session)
             return BuyoutFlowResponse(
-                text=(
+                text=fsm_prompt(
                     "Напишите <b>количество</b> и, если есть, <b>размер</b> и <b>цвет</b>.\n"
                     "<b>(пример: 2 шт, S, синий)</b>"
                 ),

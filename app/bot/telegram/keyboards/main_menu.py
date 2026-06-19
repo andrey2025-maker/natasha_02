@@ -4,6 +4,8 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardBu
 
 from app.domain.enums import OrderStatus
 
+from app.domain.models import UserProfile
+
 from app.bot.telegram.callbacks import CallbackCodec
 
 
@@ -17,15 +19,32 @@ def main_menu_keyboard(include_admin: bool = False) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
-def profile_menu_keyboard(other_platform_label: str, user_id: int, codec: CallbackCodec) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📝 Заполнить профиль", callback_data=codec.encode("profile:start_fill", user_id))],
-            [InlineKeyboardButton(text=f"🔗 Есть профиль {other_platform_label}", callback_data=codec.encode("profile:start_sync", user_id))],
+def profile_menu_keyboard(
+    other_platform_label: str,
+    user_id: int,
+    codec: CallbackCodec,
+    profile: UserProfile | None = None,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if not (profile and profile.is_filled):
+        rows.append(
+            [InlineKeyboardButton(text="📝 Заполнить профиль", callback_data=codec.encode("profile:start_fill", user_id))]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"🔗 Есть профиль {other_platform_label}",
+                    callback_data=codec.encode("profile:start_sync", user_id),
+                )
+            ]
+        )
+    rows.extend(
+        [
             [InlineKeyboardButton(text="🛍 Заказ выкупа", callback_data=codec.encode("profile:buyout_start", user_id))],
             [InlineKeyboardButton(text="📦 Мои заказы", callback_data=codec.encode("profile:buyout_orders", user_id))],
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def profile_confirm_keyboard(user_id: int, codec: CallbackCodec) -> InlineKeyboardMarkup:
