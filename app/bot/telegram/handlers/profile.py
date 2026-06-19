@@ -312,6 +312,7 @@ async def _forward_idle_message_to_questions_topic(
         message=message,
         target_chat_id=int(target_chat_id),
         default_topic_id=default_topic_id,
+        group_topics_store=group_topics_store,
         topic_dialog_store=topic_dialog_store,
         profile=profile,
     )
@@ -372,6 +373,7 @@ async def _resolve_or_create_user_topic(
     message: Message,
     target_chat_id: int,
     default_topic_id: int | None,
+    group_topics_store: GroupTopicsStore,
     topic_dialog_store: TopicDialogStore,
     profile,
 ) -> int | None:
@@ -386,7 +388,22 @@ async def _resolve_or_create_user_topic(
         return existing
     profile_code = profile.code if profile else "—"
     profile_name = (profile.name if profile else "") or "без имени"
-    topic_name = f"{profile_code} | {profile_name} | tg:{message.from_user.id if message.from_user else 0}"
+    profile_phone = (profile.phone if profile else "") or "без телефона"
+    profile_city = (profile.city if profile else "") or "без города"
+    selected = await group_topics_store.get_topic_name_parts()
+    parts: list[str] = []
+    if "code" in selected:
+        parts.append(str(profile_code))
+    if "name" in selected:
+        parts.append(str(profile_name))
+    if "phone" in selected:
+        parts.append(str(profile_phone))
+    if "city" in selected:
+        parts.append(str(profile_city))
+    if not parts:
+        parts = [str(profile_code), str(profile_name)]
+    parts.append(f"tg:{message.from_user.id if message.from_user else 0}")
+    topic_name = " | ".join(parts)
     topic_name = topic_name[:120]
     try:
         created = await message.bot.create_forum_topic(chat_id=target_chat_id, name=topic_name)

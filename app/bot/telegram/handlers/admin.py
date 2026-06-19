@@ -707,9 +707,11 @@ def build_admin_router(container: AppContainer) -> Router:
                 return
             await payment_store.save_text(new_text)
             utils_state["awaiting_payment_text"] = False
-            utils_state["awaiting_payment_media"] = False
             await _save_admin_utils_state(container, session, utils_state)
-            await message.answer("Инструкция по оплате обновлена.")
+            if utils_state.get("awaiting_payment_media"):
+                await message.answer("Текст оплаты обновлен. Теперь отправьте медиа или нажмите «Готово медиа».")
+            else:
+                await message.answer("Инструкция по оплате обновлена.")
             return
 
         if utils_state.get("awaiting_payment_media"):
@@ -1827,8 +1829,173 @@ def build_admin_router(container: AppContainer) -> Router:
                 await callback.answer()
                 await callback.message.answer(
                     "🧰 Утилиты админки.\n"
-                    "Разделы: «Бэкапы», «Коды», «Группа», «Оплата», «Оплаты группа».",
+                    "Выберите подраздел:",
+                    reply_markup=_utils_inline_keyboard(callback.from_user.id, callback_codec),
                 )
+                return
+            await callback.answer()
+            return
+
+        if action.startswith("admin:utils:"):
+            utils_action = action.split(":", maxsplit=2)[2]
+            if utils_action == "root":
+                await callback.answer()
+                await callback.message.answer(
+                    "🧰 Утилиты админки.\nВыберите подраздел:",
+                    reply_markup=_utils_inline_keyboard(callback.from_user.id, callback_codec),
+                )
+                return
+            if utils_action == "group":
+                target_chat_id, target_topic_id = await group_topics_store.get_tg_topic("logs")
+                _, payment_topic_id = await group_topics_store.get_tg_topic("payment")
+                _, questions_topic_id = await group_topics_store.get_tg_topic("questions")
+                _, buyout_topic_id = await group_topics_store.get_tg_topic("buyout")
+                vk_logs_peer_id = await group_topics_store.get_vk_logs_peer_id()
+                await callback.answer()
+                await callback.message.answer(
+                    "🛰 Группа (темы диалогов):\n"
+                    f"chat_id={target_chat_id or 'не задан'}, logs={target_topic_id or '—'}, "
+                    f"payment={payment_topic_id or '—'}, questions={questions_topic_id or '—'}, "
+                    f"buyout={buyout_topic_id or '—'}\n"
+                    f"VK logs peer_id={vk_logs_peer_id or 'не задан'}",
+                    reply_markup=_utils_group_keyboard(callback.from_user.id, callback_codec),
+                )
+                return
+            if utils_action == "group:add":
+                session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, callback.from_user.id)
+                state = _get_admin_utils_state(session)
+                _reset_admin_utils_waiters(state)
+                state["awaiting_backup_target"] = True
+                await _save_admin_utils_state(container, session, state)
+                await callback.answer()
+                await callback.message.answer("Отправьте chat_id [topic_id], например: -1001234567890 42")
+                return
+            if utils_action == "group:notifications":
+                settings = await notification_settings_store.get_settings()
+                await callback.answer()
+                await callback.message.answer(
+                    _notification_settings_text(settings),
+                    reply_markup=_notifications_keyboard_with_back(callback.from_user.id, callback_codec, settings),
+                )
+                return
+            if utils_action == "group:topics":
+                selected = await group_topics_store.get_topic_name_parts()
+                await callback.answer()
+                await callback.message.answer(
+                    "Шаблон подписи темы для новых диалогов.\n"
+                    "Выбранные поля отмечены зеленым.",
+                    reply_markup=_utils_topics_keyboard(callback.from_user.id, callback_codec, selected),
+                )
+                return
+            if utils_action.startswith("group:topics:toggle:"):
+                part = utils_action.split(":")[-1]
+                selected = await group_topics_store.toggle_topic_name_part(part)
+                await callback.answer("Обновлено")
+                await callback.message.edit_reply_markup(
+                    reply_markup=_utils_topics_keyboard(callback.from_user.id, callback_codec, selected)
+                )
+                return
+            if utils_action == "ref":
+                await callback.answer()
+                await callback.message.answer(
+                    "Хозяйка Наталья🐢, Повелительница Китайчиков я бы с радостью награждал друзей, "
+                    "но ты пока не придумала условия реферальной системы. "
+                    "Давай сделаем это вместе - я подскажу, если что! Напиши если созреешь @andreyhggh",
+                    reply_markup=_utils_back_keyboard(callback.from_user.id, callback_codec),
+                )
+                return
+            if utils_action == "backups":
+                enabled = await backup_service.auto_backup_enabled()
+                await callback.answer()
+                await callback.message.answer(
+                    "🗂 Бэкапы: выгрузка БД/Excel и авто-бэкап каждые 4 часа.",
+                    reply_markup=_backup_keyboard_with_back(callback.from_user.id, callback_codec, enabled),
+                )
+                return
+            if utils_action == "admins":
+                is_main = callback.from_user.id == container.settings.telegram.main_admin_id
+                open_for_all = await admin_access_store.is_open_for_all_admins()
+                if not is_main and not open_for_all:
+                    await callback.answer("Раздел доступен только главному админу.", show_alert=True)
+                    return
+                admin_ids = await container.admin_service.list_admins()
+                lines = [f"- {admin_id}" for admin_id in admin_ids]
+                await callback.answer()
+                await callback.message.answer(
+                    "Админы:\n" + "\n".join(lines),
+                    reply_markup=_admins_access_keyboard_with_back(
+                        user_id=callback.from_user.id,
+                        codec=callback_codec,
+                        open_for_all=open_for_all,
+                        is_main=is_main,
+                        admin_ids=admin_ids,
+                        main_admin_id=container.settings.telegram.main_admin_id,
+                    ),
+                )
+                return
+            if utils_action == "codes":
+                reserved = await container.code_reserve_repo.list_reserved()
+                preview = ", ".join(reserved[:40]) if reserved else "пусто"
+                if len(reserved) > 40:
+                    preview += ", ..."
+                await callback.answer()
+                await callback.message.answer(
+                    "🔐 Резерв кодов:\n"
+                    f"{preview}",
+                    reply_markup=_codes_inline_keyboard(callback.from_user.id, callback_codec),
+                )
+                return
+            if utils_action == "codes:add":
+                session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, callback.from_user.id)
+                state = _get_admin_utils_state(session)
+                _reset_admin_utils_waiters(state)
+                state["awaiting_codes_add"] = True
+                await _save_admin_utils_state(container, session, state)
+                await callback.answer()
+                await callback.message.answer("Отправьте коды для добавления (через запятую или по строкам).")
+                return
+            if utils_action == "codes:remove":
+                session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, callback.from_user.id)
+                state = _get_admin_utils_state(session)
+                _reset_admin_utils_waiters(state)
+                state["awaiting_codes_remove"] = True
+                await _save_admin_utils_state(container, session, state)
+                await callback.answer()
+                await callback.message.answer("Отправьте коды для удаления (через запятую или по строкам).")
+                return
+            if utils_action == "payment":
+                text = await payment_store.get_text()
+                media_items = await payment_store.get_media_items()
+                await callback.answer()
+                await callback.message.answer(
+                    "💸 Контент оплаты для пользователей:\n\n"
+                    f"{text}\n\n"
+                    f"Медиа: {len(media_items)}\n{_media_items_summary(media_items)}",
+                    reply_markup=_payment_inline_keyboard(callback.from_user.id, callback_codec),
+                )
+                return
+            if utils_action == "payment:edit":
+                session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, callback.from_user.id)
+                state = _get_admin_utils_state(session)
+                _reset_admin_utils_waiters(state)
+                state["awaiting_payment_text"] = True
+                state["awaiting_payment_media"] = True
+                await _save_admin_utils_state(container, session, state)
+                await callback.answer()
+                await callback.message.answer(
+                    "Режим редактирования оплаты.\n"
+                    "1) Отправьте новый текст.\n"
+                    "2) Затем отправляйте медиа.\n"
+                    "Когда закончите — нажмите «Готово медиа»."
+                )
+                return
+            if utils_action == "payment:media_done":
+                session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, callback.from_user.id)
+                state = _get_admin_utils_state(session)
+                state["awaiting_payment_media"] = False
+                state["awaiting_payment_text"] = False
+                await _save_admin_utils_state(container, session, state)
+                await callback.answer("Сохранено")
                 return
             await callback.answer()
             return
@@ -1860,7 +2027,7 @@ def build_admin_router(container: AppContainer) -> Router:
             await backup_service.set_auto_backup_enabled(enabled)
             await callback.answer("Авто-бэкап обновлен")
             await callback.message.edit_reply_markup(
-                reply_markup=_backup_keyboard(callback.from_user.id, callback_codec, enabled)
+                reply_markup=_backup_keyboard_with_back(callback.from_user.id, callback_codec, enabled)
             )
             return
 
@@ -1870,7 +2037,7 @@ def build_admin_router(container: AppContainer) -> Router:
             await callback.answer("Настройки обновлены")
             await callback.message.edit_text(
                 _notification_settings_text(settings),
-                reply_markup=_notifications_keyboard(callback.from_user.id, callback_codec, settings),
+                reply_markup=_notifications_keyboard_with_back(callback.from_user.id, callback_codec, settings),
             )
             return
 
@@ -1884,7 +2051,7 @@ def build_admin_router(container: AppContainer) -> Router:
             await callback.answer("Доступ обновлен")
             await callback.message.edit_text(
                 "Админы:\n" + "\n".join(lines),
-                reply_markup=_admins_access_keyboard(
+                reply_markup=_admins_access_keyboard_with_back(
                     user_id=callback.from_user.id,
                     codec=callback_codec,
                     open_for_all=new_value,
@@ -1940,7 +2107,7 @@ def build_admin_router(container: AppContainer) -> Router:
             await callback.answer("Админ удален" if ok else "Не удалось удалить", show_alert=not ok)
             await callback.message.edit_text(
                 "Админы:\n" + "\n".join(lines),
-                reply_markup=_admins_access_keyboard(
+                reply_markup=_admins_access_keyboard_with_back(
                     user_id=callback.from_user.id,
                     codec=callback_codec,
                     open_for_all=await admin_access_store.is_open_for_all_admins(),
@@ -2695,9 +2862,8 @@ def _profile_list_item_text(index: int, profile: UserProfile) -> str:
         vk_id = int(profile.vk_user_id)
         vk_value = f"<a href='https://vk.com/id{vk_id}'>vk.com/id{vk_id}</a>"
     details = (
-        f"{status} — статус\n"
+        f"{status} 🆔 Код: {_h(profile.code)}\n"
         f"👤 Имя: {name_value}\n"
-        f"🆔 Код: {_h(profile.code)}\n"
         f"📞 Тел: {_h(profile.phone or 'Нет')}\n"
         f"🏙 Город: {_h(profile.city or 'Нет')}\n"
         f"🌍 Загран Паспорт: {'Да' if profile.has_passport else 'Нет'}\n"
@@ -2808,9 +2974,8 @@ def _profile_details(
         vk_id = int(profile.vk_user_id)
         vk_value = f"<a href='https://vk.com/id{vk_id}'>id{vk_id}</a>"
     details = (
-        f"{_profile_state_emoji(profile)} — статус\n"
+        f"{_profile_state_emoji(profile)} 🆔 Код: {_h(profile.code)}\n"
         f"👤 Имя: {name_value}\n"
-        f"🆔 Код: {_h(profile.code)}\n"
         f"📞 Тел: {_h(profile.phone or 'Нет')}\n"
         f"🏙 Город: {_h(profile.city or 'Нет')}\n"
         f"🌍 Загран Паспорт: {'Да' if profile.has_passport else 'Нет'}\n"
@@ -3391,6 +3556,93 @@ def _broadcast_keyboard(user_id: int, codec: CallbackCodec) -> InlineKeyboardMar
     )
 
 
+def _utils_inline_keyboard(user_id: int, codec: CallbackCodec) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Группа", callback_data=codec.encode("admin:utils:group", user_id)),
+                InlineKeyboardButton(text="Рефералка", callback_data=codec.encode("admin:utils:ref", user_id)),
+            ],
+            [
+                InlineKeyboardButton(text="Бэкапы", callback_data=codec.encode("admin:utils:backups", user_id)),
+                InlineKeyboardButton(text="Админы", callback_data=codec.encode("admin:utils:admins", user_id)),
+            ],
+            [
+                InlineKeyboardButton(text="Коды", callback_data=codec.encode("admin:utils:codes", user_id)),
+                InlineKeyboardButton(text="Оплата", callback_data=codec.encode("admin:utils:payment", user_id)),
+            ],
+        ]
+    )
+
+
+def _utils_back_keyboard(user_id: int, codec: CallbackCodec) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=codec.encode("admin:utils:root", user_id))]
+        ]
+    )
+
+
+def _utils_group_keyboard(user_id: int, codec: CallbackCodec) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Добавить", callback_data=codec.encode("admin:utils:group:add", user_id)),
+                InlineKeyboardButton(
+                    text="Уведомления",
+                    callback_data=codec.encode("admin:utils:group:notifications", user_id),
+                ),
+            ],
+            [InlineKeyboardButton(text="Темы", callback_data=codec.encode("admin:utils:group:topics", user_id))],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=codec.encode("admin:utils:root", user_id))],
+        ]
+    )
+
+
+def _utils_topics_keyboard(user_id: int, codec: CallbackCodec, selected: list[str]) -> InlineKeyboardMarkup:
+    def _btn(label: str, key: str) -> InlineKeyboardButton:
+        mark = "🟢" if key in selected else "🔴"
+        return InlineKeyboardButton(
+            text=f"{mark} {label}",
+            callback_data=codec.encode(f"admin:utils:group:topics:toggle:{key}", user_id),
+        )
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [_btn("Код", "code"), _btn("Имя", "name")],
+            [_btn("Телефон", "phone"), _btn("Город", "city")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=codec.encode("admin:utils:group", user_id))],
+        ]
+    )
+
+
+def _codes_inline_keyboard(user_id: int, codec: CallbackCodec) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Добавить", callback_data=codec.encode("admin:utils:codes:add", user_id)),
+                InlineKeyboardButton(text="Удалить", callback_data=codec.encode("admin:utils:codes:remove", user_id)),
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=codec.encode("admin:utils:root", user_id))],
+        ]
+    )
+
+
+def _payment_inline_keyboard(user_id: int, codec: CallbackCodec) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Ред.", callback_data=codec.encode("admin:utils:payment:edit", user_id)),
+                InlineKeyboardButton(
+                    text="Готово медиа",
+                    callback_data=codec.encode("admin:utils:payment:media_done", user_id),
+                ),
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=codec.encode("admin:utils:root", user_id))],
+        ]
+    )
+
+
 def _admin_root_inline_keyboard(user_id: int, codec: CallbackCodec, is_main: bool) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [
@@ -3500,6 +3752,27 @@ def _admins_access_keyboard(
                 )
             ]
         )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _admins_access_keyboard_with_back(
+    user_id: int,
+    codec: CallbackCodec,
+    open_for_all: bool,
+    is_main: bool,
+    admin_ids: list[int],
+    main_admin_id: int,
+) -> InlineKeyboardMarkup:
+    base = _admins_access_keyboard(
+        user_id=user_id,
+        codec=codec,
+        open_for_all=open_for_all,
+        is_main=is_main,
+        admin_ids=admin_ids,
+        main_admin_id=main_admin_id,
+    )
+    rows = list(base.inline_keyboard) if base else []
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=codec.encode("admin:utils:root", user_id))])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -3632,6 +3905,17 @@ def _notifications_keyboard(
     )
 
 
+def _notifications_keyboard_with_back(
+    user_id: int,
+    codec: CallbackCodec,
+    settings: dict[str, bool],
+) -> InlineKeyboardMarkup:
+    base = _notifications_keyboard(user_id, codec, settings)
+    rows = list(base.inline_keyboard)
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=codec.encode("admin:utils:group", user_id))])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def _backup_keyboard(user_id: int, codec: CallbackCodec, enabled: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -3656,6 +3940,13 @@ def _backup_keyboard(user_id: int, codec: CallbackCodec, enabled: bool) -> Inlin
             ],
         ]
     )
+
+
+def _backup_keyboard_with_back(user_id: int, codec: CallbackCodec, enabled: bool) -> InlineKeyboardMarkup:
+    base = _backup_keyboard(user_id, codec, enabled)
+    rows = list(base.inline_keyboard)
+    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=codec.encode("admin:utils:root", user_id))])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _get_admin_broadcast_state(session) -> dict:

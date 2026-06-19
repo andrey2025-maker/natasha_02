@@ -585,6 +585,37 @@ class GroupTopicsStore:
             data.pop(key, None)
         await self._save(data)
 
+    async def get_topic_name_parts(self) -> list[str]:
+        data = await self.get()
+        raw = data.get("topic_name_parts")
+        if not isinstance(raw, list):
+            return ["code", "name"]
+        allowed = {"code", "name", "phone", "city"}
+        parts = [str(item).strip().lower() for item in raw if str(item).strip().lower() in allowed]
+        return parts or ["code", "name"]
+
+    async def set_topic_name_parts(self, parts: list[str]) -> None:
+        allowed = {"code", "name", "phone", "city"}
+        normalized = [str(item).strip().lower() for item in parts if str(item).strip().lower() in allowed]
+        if not normalized:
+            normalized = ["code", "name"]
+        data = await self.get()
+        data["topic_name_parts"] = normalized
+        await self._save(data)
+
+    async def toggle_topic_name_part(self, part: str) -> list[str]:
+        normalized_part = str(part).strip().lower()
+        allowed = {"code", "name", "phone", "city"}
+        if normalized_part not in allowed:
+            return await self.get_topic_name_parts()
+        current = await self.get_topic_name_parts()
+        if normalized_part in current:
+            current = [item for item in current if item != normalized_part]
+        else:
+            current.append(normalized_part)
+        await self.set_topic_name_parts(current)
+        return await self.get_topic_name_parts()
+
     async def set_tg_topics(
         self,
         logs_topic_id: int,
