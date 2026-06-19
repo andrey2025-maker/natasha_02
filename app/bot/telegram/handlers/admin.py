@@ -2400,40 +2400,35 @@ async def _send_profiles_page(
 def _profiles_pagination(user_id: int, page: int, codec: CallbackCodec, items: list[UserProfile]):
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-    rows: list[list[InlineKeyboardButton]] = []
-    for item in items:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"👁 {_h(item.code)}",
-                    callback_data=codec.encode(f"admin:profile:view:{item.code}", user_id),
-                ),
-                InlineKeyboardButton(
-                    text=f"✏️ Редактировать {_h(item.code)}",
-                    callback_data=codec.encode(f"admin:profile:edit:{item.code}", user_id),
-                ),
-            ]
-        )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="🔎 Поиск",
-                callback_data=codec.encode("admin:profiles:search_menu", user_id),
-            )
-        ]
-    )
-    rows.append(
+    rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(
                 text="⬅️",
                 callback_data=codec.encode(f"admin:profiles:page:{max(1, page - 1)}", user_id),
             ),
             InlineKeyboardButton(
+                text="🔍",
+                callback_data=codec.encode("admin:profiles:search_menu", user_id),
+            ),
+            InlineKeyboardButton(
                 text="➡️",
                 callback_data=codec.encode(f"admin:profiles:page:{page + 1}", user_id),
             ),
         ]
-    )
+    ]
+    code_buttons: list[InlineKeyboardButton] = []
+    for item in items:
+        code_buttons.append(
+            InlineKeyboardButton(
+                text=item.code,
+                callback_data=codec.encode(f"admin:profile:view:{item.code}", user_id),
+            )
+        )
+        if len(code_buttons) == 3:
+            rows.append(code_buttons)
+            code_buttons = []
+    if code_buttons:
+        rows.append(code_buttons)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -2686,23 +2681,33 @@ def _profile_state_emoji(profile: UserProfile) -> str:
     if profile.is_blocked_by_admin:
         return "⛔"
     if profile.blocked_bot:
-        return "🚫"
-    return "✅"
+        return "🔴"
+    return "🟢"
 
 
 def _profile_list_item_text(index: int, profile: UserProfile) -> str:
+    status = _profile_state_emoji(profile)
+    name_value = _h(profile.name or "Нет")
+    if profile.telegram_user_id:
+        name_value = f"<a href='tg://user?id={int(profile.telegram_user_id)}'>{name_value}</a>"
+    vk_value = "Нет"
+    if profile.vk_user_id:
+        vk_id = int(profile.vk_user_id)
+        vk_value = f"<a href='https://vk.com/id{vk_id}'>vk.com/id{vk_id}</a>"
     details = (
-        f"Имя: {_h(profile.name or '—')}\n"
-        f"Код: {_h(profile.code)}\n"
-        f"Тел: {_h(profile.phone or '—')}\n"
-        f"Город: {_h(profile.city or '—')}\n"
-        f"Загран паспорт: {'Да' if profile.has_passport else 'Нет'}\n"
-        f"ID: {_h(profile.telegram_user_id or 'Нет')}\n"
-        f"ВК: {_h(profile.vk_user_id or 'Нет')}\n"
-        f"Последняя активность: {_h(profile.last_activity_at.strftime('%d.%m.%Y %H:%M'))}\n"
-        f"Дата регистрации: {_h(profile.created_at.strftime('%d.%m.%Y %H:%M'))}"
+        f"{status} — статус\n"
+        f"👤 Имя: {name_value}\n"
+        f"🆔 Код: {_h(profile.code)}\n"
+        f"📞 Тел: {_h(profile.phone or 'Нет')}\n"
+        f"🏙 Город: {_h(profile.city or 'Нет')}\n"
+        f"🌍 Загран Паспорт: {'Да' if profile.has_passport else 'Нет'}\n"
+        f"💬 Комментарий: —\n"
+        f"🆔 ID: {_h(profile.telegram_user_id or 'Нет')}\n"
+        f"🔗 ВК: {vk_value}\n"
+        f"🕒 Последняя активность: {_h(profile.last_activity_at.strftime('%Y-%m-%d %H:%M'))}\n"
+        f"📅 Дата регистрации: {_h(profile.created_at.strftime('%Y-%m-%d %H:%M'))}"
     )
-    return f"{index}. {_profile_state_emoji(profile)} <b>{_h(profile.code)}</b>\n<tg-spoiler>{details}</tg-spoiler>"
+    return f"{index}.\n<blockquote expandable>{details}</blockquote>"
 
 
 def _block_button(profile: UserProfile, user_id: int, codec: CallbackCodec):
@@ -2723,23 +2728,33 @@ def _block_button(profile: UserProfile, user_id: int, codec: CallbackCodec):
 
 def _profile_actions_keyboard(profile: UserProfile, user_id: int, codec: CallbackCodec) -> InlineKeyboardMarkup:
     block_kb = _block_button(profile, user_id, codec)
-    rows = list(block_kb.inline_keyboard)
-    rows.append(
+    rows = [
         [
             InlineKeyboardButton(
-                text="✏️ Редактировать",
-                callback_data=codec.encode(f"admin:profile:edit:{profile.code}", user_id),
-            )
-        ]
-    )
-    rows.append(
+                text="👤 Имя",
+                callback_data=codec.encode(f"admin:profile:edit_field:{profile.code}:name", user_id),
+            ),
+            InlineKeyboardButton(
+                text="📞 Тел",
+                callback_data=codec.encode(f"admin:profile:edit_field:{profile.code}:phone", user_id),
+            ),
+            InlineKeyboardButton(
+                text="🏙 Город",
+                callback_data=codec.encode(f"admin:profile:edit_field:{profile.code}:city", user_id),
+            ),
+        ],
         [
             InlineKeyboardButton(
-                text="✏️ Комментарий",
-                callback_data=codec.encode(f"admin:profile:comment:{profile.code}", user_id),
-            )
-        ]
-    )
+                text="🌍 Загран",
+                callback_data=codec.encode(f"admin:profile:edit_field:{profile.code}:passport", user_id),
+            ),
+            InlineKeyboardButton(
+                text="💬 Коммент",
+                callback_data=codec.encode(f"admin:profile:edit_field:{profile.code}:comment", user_id),
+            ),
+        ],
+    ]
+    rows.extend(list(block_kb.inline_keyboard))
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -2793,21 +2808,22 @@ def _profile_details(
         vk_id = int(profile.vk_user_id)
         vk_value = f"<a href='https://vk.com/id{vk_id}'>id{vk_id}</a>"
     details = (
-        f"<b>Имя:</b> {name_value}\n"
-        f"<b>Код:</b> {_h(profile.code)}\n"
-        f"<b>Тел:</b> {_h(profile.phone or '—')}\n"
-        f"<b>Город:</b> {_h(profile.city or '—')}\n"
-        f"<b>Загран паспорт:</b> {'Да' if profile.has_passport else 'Нет'}\n"
-        f"<b>Комментарий:</b> {_h(comment_line)}\n"
-        f"<b>ID:</b> {_h(profile.telegram_user_id or 'Нет')}\n"
-        f"<b>ВК:</b> {vk_value}\n"
-        f"<b>Заблокирован админом:</b> {_h(blocked_admin_text)}\n"
-        f"<b>Причина блокировки:</b> {_h(reason_line)}\n"
-        f"<b>Отписан от бота:</b> {_h(blocked_bot_text)}\n"
-        f"<b>Последняя активность:</b> {_h(profile.last_activity_at.strftime('%d.%m.%Y %H:%M'))}\n"
-        f"<b>Дата регистрации:</b> {_h(profile.created_at.strftime('%d.%m.%Y %H:%M'))}"
+        f"{_profile_state_emoji(profile)} — статус\n"
+        f"👤 Имя: {name_value}\n"
+        f"🆔 Код: {_h(profile.code)}\n"
+        f"📞 Тел: {_h(profile.phone or 'Нет')}\n"
+        f"🏙 Город: {_h(profile.city or 'Нет')}\n"
+        f"🌍 Загран Паспорт: {'Да' if profile.has_passport else 'Нет'}\n"
+        f"💬 Комментарий: {_h(comment_line)}\n"
+        f"🆔 ID: {_h(profile.telegram_user_id or 'Нет')}\n"
+        f"🔗 ВК: {vk_value}\n"
+        f"🕒 Последняя активность: {_h(profile.last_activity_at.strftime('%Y-%m-%d %H:%M'))}\n"
+        f"📅 Дата регистрации: {_h(profile.created_at.strftime('%Y-%m-%d %H:%M'))}\n"
+        f"⛔ Заблокирован админом: {_h(blocked_admin_text)}\n"
+        f"🧾 Причина блокировки: {_h(reason_line)}\n"
+        f"🔴 Отписан от бота: {_h(blocked_bot_text)}"
     )
-    return f"{_profile_state_emoji(profile)} <b>Карточка профиля</b>\n<tg-spoiler>{details}</tg-spoiler>"
+    return f"<blockquote expandable>{details}</blockquote>"
 
 
 async def _send_orders_panel(

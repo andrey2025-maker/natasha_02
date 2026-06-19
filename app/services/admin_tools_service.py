@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -47,7 +48,15 @@ class DbSettingsStore:
         if not row:
             return None
         value = row["value"]
-        return dict(value) if isinstance(value, dict) else None
+        if isinstance(value, dict):
+            return dict(value)
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except (TypeError, ValueError):
+                return None
+            return dict(parsed) if isinstance(parsed, dict) else None
+        return None
 
     async def set(self, key: str, value: dict) -> None:
         payload = dict(value)
@@ -64,7 +73,7 @@ class DbSettingsStore:
                 SET value = EXCLUDED.value, updated_at = NOW()
                 """,
                 key,
-                payload,
+                json.dumps(payload, ensure_ascii=False),
             )
 
     async def delete(self, key: str) -> None:
