@@ -17,6 +17,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
+from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
 from app.bot.telegram.handlers.questions_topic import ensure_dialog_topic_for_telegram_user
 from app.services.dialog_topic_profile_sync import refresh_dialog_topic_profile
 from app.bot.telegram.keyboards.profile import main_menu_keyboard
