@@ -267,14 +267,25 @@ def build_profile_router(container: AppContainer) -> Router:
         is_admin = await container.admin_service.is_admin(message.from_user.id)
         if is_admin:
             if session.state == DialogState.IDLE:
-                await forward_message_to_dialog_topic(
+                logs_chat_id, _ = await group_topics_store.get_tg_topic("logs")
+                if not logs_chat_id:
+                    await message.answer(
+                        "Диалоговая группа не настроена. "
+                        "Задайте chat_id в Админ → Утилиты → Группа."
+                    )
+                    return
+                copied = await forward_message_to_dialog_topic(
                     message=message,
                     container=container,
                     group_topics_store=group_topics_store,
                     notification_settings_store=notification_settings_store,
                     topic_dialog_store=topic_dialog_store,
-                    is_admin=True,
                 )
+                if not copied:
+                    await message.answer(
+                        "Не удалось создать тему или доставить сообщение в группу. "
+                        "Проверьте, что группа — форум и у бота есть права на управление темами."
+                    )
             return
         user_key = f"tg:{message.from_user.id}"
         if not container.rate_limiter.allow_request(user_key, "<media>"):
@@ -339,14 +350,25 @@ def build_profile_router(container: AppContainer) -> Router:
                     send_ack=True,
                 )
         elif session.state == DialogState.IDLE:
-            await forward_message_to_dialog_topic(
+            logs_chat_id, _ = await group_topics_store.get_tg_topic("logs")
+            if not logs_chat_id:
+                await message.answer(
+                    "Диалоговая группа не настроена. "
+                    "Задайте chat_id в Админ → Утилиты → Группа."
+                )
+                return
+            copied = await forward_message_to_dialog_topic(
                 message=message,
                 container=container,
                 group_topics_store=group_topics_store,
                 notification_settings_store=notification_settings_store,
                 topic_dialog_store=topic_dialog_store,
-                is_admin=True,
             )
+            if not copied:
+                await message.answer(
+                    "Не удалось создать тему или доставить сообщение в группу. "
+                    "Проверьте, что группа — форум и у бота есть права на управление темами."
+                )
         if session.state == DialogState.IDLE:
             return
 

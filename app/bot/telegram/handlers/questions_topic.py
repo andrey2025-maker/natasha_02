@@ -60,6 +60,7 @@ async def ensure_dialog_topic_for_telegram_user(
     is_admin: bool = False,
     default_topic_id: int | None = None,
 ) -> int | None:
+    _ = default_topic_id
     existing = await topic_dialog_store.get_user_topic(
         chat_id=int(chat_id),
         platform=Platform.TELEGRAM.value,
@@ -77,7 +78,7 @@ async def ensure_dialog_topic_for_telegram_user(
     try:
         created = await bot.create_forum_topic(chat_id=int(chat_id), name=topic_name)
     except Exception:
-        return int(default_topic_id) if default_topic_id else None
+        return None
     topic_id = int(created.message_thread_id)
     await topic_dialog_store.set_user_topic(
         chat_id=int(chat_id),
@@ -95,12 +96,16 @@ async def forward_message_to_dialog_topic(
     group_topics_store: GroupTopicsStore,
     notification_settings_store: NotificationSettingsStore,
     topic_dialog_store: TopicDialogStore,
-    is_admin: bool = False,
+    is_admin: bool | None = None,
 ) -> tuple[int, int, int] | None:
     if not message.from_user:
         return None
 
     profile = await container.profile_repo.get_by_platform_user(Platform.TELEGRAM, message.from_user.id)
+    user_is_admin = await container.admin_service.is_admin(message.from_user.id)
+    if is_admin is None:
+        is_admin = user_is_admin
+    admin_topic = user_is_admin and profile is None
     logs_chat_id, logs_default_topic_id = await group_topics_store.get_tg_topic("logs")
     if not logs_chat_id:
         return None
@@ -112,7 +117,7 @@ async def forward_message_to_dialog_topic(
         group_topics_store=group_topics_store,
         topic_dialog_store=topic_dialog_store,
         profile=profile,
-        is_admin=is_admin,
+        is_admin=admin_topic,
         default_topic_id=logs_default_topic_id,
     )
     if not dialog_topic_id:
@@ -125,7 +130,7 @@ async def forward_message_to_dialog_topic(
         group_topics_store=group_topics_store,
         topic_dialog_store=topic_dialog_store,
         notification_settings_store=notification_settings_store,
-        is_admin=is_admin,
+        is_admin=admin_topic,
     )
 
     notify_kind = "button" if is_admin else "user"

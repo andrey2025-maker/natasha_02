@@ -4356,6 +4356,7 @@ async def _create_required_group_topics(
     payment_topic_id = int(topic_payment.message_thread_id)
     questions_topic_id = int(topic_questions.message_thread_id)
     buyout_topic_id = int(topic_buyout.message_thread_id)
+    await group_topics_store.set_tg_chat_id(chat_id)
     await group_topics_store.set_tg_topics(
         logs_topic_id=logs_topic_id,
         payment_topic_id=payment_topic_id,
@@ -4411,6 +4412,14 @@ async def _provision_topics_for_existing_telegram_profiles(
             )
             if topic_id:
                 created_count += 1
+                await refresh_dialog_topic_profile(
+                    bot,
+                    container=container,
+                    tg_user_id=tg_user_id,
+                    group_topics_store=group_topics_store,
+                    topic_dialog_store=topic_dialog_store,
+                    is_admin=False,
+                )
             else:
                 failed_count += 1
         if len(chunk) < page_size:
@@ -4430,6 +4439,7 @@ async def _provision_topics_for_existing_telegram_profiles(
             existed_count += 1
             continue
         profile = await container.profile_repo.get_by_platform_user(Platform.TELEGRAM, tg_user_id)
+        admin_topic = profile is None
         topic_id = await ensure_dialog_topic_for_telegram_user(
             bot=bot,
             chat_id=chat_id,
@@ -4437,11 +4447,19 @@ async def _provision_topics_for_existing_telegram_profiles(
             group_topics_store=group_topics_store,
             topic_dialog_store=topic_dialog_store,
             profile=profile,
-            is_admin=profile is None,
+            is_admin=admin_topic,
             default_topic_id=logs_default_topic_id,
         )
         if topic_id:
             created_count += 1
+            await refresh_dialog_topic_profile(
+                bot,
+                container=container,
+                tg_user_id=tg_user_id,
+                group_topics_store=group_topics_store,
+                topic_dialog_store=topic_dialog_store,
+                is_admin=admin_topic,
+            )
         else:
             failed_count += 1
 
