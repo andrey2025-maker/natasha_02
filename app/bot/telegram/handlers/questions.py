@@ -14,10 +14,12 @@ from app.domain.enums import Platform
 from app.services.admin_tools_service import (
     FaqMediaStore,
     ProhibitedGoodsStore,
+    QuestionsAlertStore,
     StaticContentStore,
     TopicDialogStore,
     send_stored_media_to_telegram,
 )
+from app.bot.telegram.handlers.questions_topic import handle_questions_process_callback
 
 
 def build_questions_router(container: AppContainer) -> Router:
@@ -25,6 +27,7 @@ def build_questions_router(container: AppContainer) -> Router:
     callback_codec = CallbackCodec(container.callback_signer)
     prohibited_store = ProhibitedGoodsStore(container.settings.database.dsn)
     topic_dialog_store = TopicDialogStore(container.settings.database.dsn)
+    questions_alert_store = QuestionsAlertStore(container.settings.database.dsn)
     faq_media_store = FaqMediaStore(container.settings.database.dsn)
     delivery_store = StaticContentStore(
         database_dsn=container.settings.database.dsn,
@@ -151,6 +154,25 @@ def build_questions_router(container: AppContainer) -> Router:
             as_media=True,
         )
         if not relayed:
+            raise SkipHandler
+
+    @router.callback_query()
+    async def questions_topic_callbacks(callback: CallbackQuery) -> None:
+        if not callback.data:
+            raise SkipHandler
+        try:
+            action = callback_codec.decode_public(callback.data)
+        except CallbackAuthError:
+            raise SkipHandler
+        if not action.startswith("questions:"):
+            raise SkipHandler
+        handled = await handle_questions_process_callback(
+            callback,
+            action=action,
+            questions_alert_store=questions_alert_store,
+            callback_codec=callback_codec,
+        )
+        if not handled:
             raise SkipHandler
 
     @router.callback_query()

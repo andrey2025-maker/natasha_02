@@ -664,6 +664,76 @@ class GroupTopicsStore:
 
 
 @dataclass(slots=True)
+class QuestionsAlertStore:
+    database_dsn: str
+
+    @property
+    def _db(self) -> DbSettingsStore:
+        return DbSettingsStore(self.database_dsn)
+
+    async def create(
+        self,
+        *,
+        alert_token: str,
+        questions_chat_id: int,
+        dialog_chat_id: int,
+        dialog_topic_id: int,
+        dialog_message_id: int,
+        platform_user_id: int,
+    ) -> None:
+        payload = await self._load()
+        payload[alert_token] = {
+            "questions_chat_id": int(questions_chat_id),
+            "questions_message_id": None,
+            "dialog_chat_id": int(dialog_chat_id),
+            "dialog_topic_id": int(dialog_topic_id),
+            "dialog_message_id": int(dialog_message_id),
+            "platform_user_id": int(platform_user_id),
+            "processed_at": None,
+            "processed_by_name": None,
+        }
+        await self._save(payload)
+
+    async def attach_questions_message(self, alert_token: str, questions_message_id: int) -> None:
+        payload = await self._load()
+        item = payload.get(alert_token)
+        if not isinstance(item, dict):
+            return
+        item["questions_message_id"] = int(questions_message_id)
+        payload[alert_token] = item
+        await self._save(payload)
+
+    async def get(self, alert_token: str) -> dict | None:
+        payload = await self._load()
+        item = payload.get(alert_token)
+        return item if isinstance(item, dict) else None
+
+    async def mark_processed(self, alert_token: str, processed_by_name: str, processed_at: str) -> dict | None:
+        payload = await self._load()
+        item = payload.get(alert_token)
+        if not isinstance(item, dict):
+            return None
+        item["processed_at"] = processed_at
+        item["processed_by_name"] = processed_by_name.strip()
+        payload[alert_token] = item
+        await self._save(payload)
+        return item
+
+    async def _load(self) -> dict:
+        payload = await self._db.get("questions_alerts")
+        if not isinstance(payload, dict):
+            return {}
+        if len(payload) > 1000:
+            keys = sorted(payload.keys())
+            for stale in keys[:-1000]:
+                payload.pop(stale, None)
+        return payload
+
+    async def _save(self, payload: dict) -> None:
+        await self._db.set("questions_alerts", payload)
+
+
+@dataclass(slots=True)
 class TopicDialogStore:
     database_dsn: str
 

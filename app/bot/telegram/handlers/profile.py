@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from html import escape
-
 from aiogram import F, Router
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.exceptions import TelegramForbiddenError
@@ -14,8 +12,9 @@ from app.bot.texts import messages as msg
 from app.core.container import AppContainer
 from app.domain.enums import DialogState, Platform
 from app.domain.models import OutboundMessage
-from app.services.admin_tools_service import GroupTopicsStore, NotificationSettingsStore, TopicDialogStore
+from app.services.admin_tools_service import GroupTopicsStore, NotificationSettingsStore, QuestionsAlertStore, TopicDialogStore
 from app.services.flows.profile_flow import FlowResponse
+from app.bot.telegram.handlers.questions_topic import forward_idle_message_to_questions_topic
 
 
 PROFILE_BUTTONS = {"Профиль", "👤 Профиль", "Заполнить профиль"}
@@ -47,6 +46,7 @@ def build_profile_router(container: AppContainer) -> Router:
     group_topics_store = GroupTopicsStore(container.settings.database.dsn)
     notification_settings_store = NotificationSettingsStore(container.settings.database.dsn)
     topic_dialog_store = TopicDialogStore(container.settings.database.dsn)
+    questions_alert_store = QuestionsAlertStore(container.settings.database.dsn)
 
     async def _apply_response(message: Message, response: object) -> None:
         outbound_messages = getattr(response, "outbound_messages", None)
@@ -244,13 +244,17 @@ def build_profile_router(container: AppContainer) -> Router:
         if not container.rate_limiter.validate_user_payload_size(text_size=0, media_size_mb=media_size_mb):
             await message.answer("Файл слишком большой. Максимум 20 МБ.")
             return
-        await _forward_idle_message_to_questions_topic(
+        if session.state != DialogState.IDLE:
+            return
+        await forward_idle_message_to_questions_topic(
             message=message,
             container=container,
             group_topics_store=group_topics_store,
             notification_settings_store=notification_settings_store,
             topic_dialog_store=topic_dialog_store,
-            send_ack=session.state == DialogState.IDLE,
+            questions_alert_store=questions_alert_store,
+            callback_codec=callback_codec,
+            send_ack=True,
         )
 
     @router.message()
@@ -275,14 +279,17 @@ def build_profile_router(container: AppContainer) -> Router:
             await message.answer("Сообщение слишком длинное.")
             return
         if not await container.admin_service.is_admin(message.from_user.id):
-            await _forward_idle_message_to_questions_topic(
-                message=message,
-                container=container,
-                group_topics_store=group_topics_store,
-                notification_settings_store=notification_settings_store,
-                topic_dialog_store=topic_dialog_store,
-                send_ack=session.state == DialogState.IDLE,
-            )
+            if session.state == DialogState.IDLE:
+                await forward_idle_message_to_questions_topic(
+                    message=message,
+                    container=container,
+                    group_topics_store=group_topics_store,
+                    notification_settings_store=notification_settings_store,
+                    topic_dialog_store=topic_dialog_store,
+                    questions_alert_store=questions_alert_store,
+                    callback_codec=callback_codec,
+                    send_ack=True,
+                )
         if session.state == DialogState.IDLE:
             return
 
@@ -290,131 +297,3 @@ def build_profile_router(container: AppContainer) -> Router:
         await _apply_response(message, response)
 
     return router
-
-
-async def _forward_idle_message_to_questions_topic(
-    message: Message,
-    container: AppContainer,
-    group_topics_store: GroupTopicsStore,
-    notification_settings_store: NotificationSettingsStore,
-    topic_dialog_store: TopicDialogStore,
-    send_ack: bool = True,
-) -> None:
-    if not message.from_user:
-        return
-    profile = await container.profile_repo.get_by_platform_user(Platform.TELEGRAM, message.from_user.id)
-    target_chat_id, default_topic_id = await group_topics_store.get_tg_topic("questions")
-    if not target_chat_id:
-        if send_ack:
-            await message.answer("Передал вопрос менеджеру. Ответим в этом чате как можно скорее.")
-        return
-    topic_id = await _resolve_or_create_user_topic(
-        message=message,
-        target_chat_id=int(target_chat_id),
-        default_topic_id=default_topic_id,
-        group_topics_store=group_topics_store,
-        topic_dialog_store=topic_dialog_store,
-        profile=profile,
-    )
-
-    profile_hint = "без профиля"
-    if profile:
-        profile_hint = f"{profile.code} / {profile.name or 'без имени'}"
-    body = (message.text or message.caption or "").strip()
-    safe_profile_hint = escape(profile_hint, quote=False)
-    text = (
-        "📩 <b>Вопрос от клиента</b>\n"
-        f"Профиль: <b>{safe_profile_hint}</b>\n"
-        f"TG ID: <code>{message.from_user.id}</code>\n\n"
-    )
-    if body:
-        text += escape(body, quote=False)
-    else:
-        text += "Медиа-сообщение клиента ниже."
-    try:
-        disable_notification = await notification_settings_store.should_disable_notification("user")
-        header = await message.bot.send_message(
-            chat_id=int(target_chat_id),
-            text=text,
-            parse_mode="HTML",
-            message_thread_id=topic_id,
-            disable_notification=disable_notification,
-        )
-        await topic_dialog_store.bind_topic_message_to_user(
-            chat_id=int(target_chat_id),
-            topic_id=topic_id,
-            topic_message_id=int(header.message_id),
-            platform=Platform.TELEGRAM.value,
-            platform_user_id=message.from_user.id,
-        )
-        if not message.text:
-            copied = await message.bot.copy_message(
-                chat_id=int(target_chat_id),
-                from_chat_id=message.chat.id,
-                message_id=message.message_id,
-                message_thread_id=topic_id,
-                reply_to_message_id=header.message_id,
-                disable_notification=True,
-            )
-            await topic_dialog_store.bind_topic_message_to_user(
-                chat_id=int(target_chat_id),
-                topic_id=topic_id,
-                topic_message_id=int(copied.message_id),
-                platform=Platform.TELEGRAM.value,
-                platform_user_id=message.from_user.id,
-            )
-    except Exception:
-        return
-    if send_ack:
-        await message.answer("Передал вопрос менеджеру. Ответим в этом чате как можно скорее.")
-
-
-async def _resolve_or_create_user_topic(
-    message: Message,
-    target_chat_id: int,
-    default_topic_id: int | None,
-    group_topics_store: GroupTopicsStore,
-    topic_dialog_store: TopicDialogStore,
-    profile,
-) -> int | None:
-    if default_topic_id is None:
-        return None
-    existing = await topic_dialog_store.get_user_topic(
-        chat_id=target_chat_id,
-        platform=Platform.TELEGRAM.value,
-        platform_user_id=message.from_user.id if message.from_user else 0,
-    )
-    if existing:
-        return existing
-    profile_code = profile.code if profile else "—"
-    profile_name = (profile.name if profile else "") or "без имени"
-    profile_phone = (profile.phone if profile else "") or "без телефона"
-    profile_city = (profile.city if profile else "") or "без города"
-    selected = await group_topics_store.get_topic_name_parts()
-    parts: list[str] = []
-    if "code" in selected:
-        parts.append(str(profile_code))
-    if "name" in selected:
-        parts.append(str(profile_name))
-    if "phone" in selected:
-        parts.append(str(profile_phone))
-    if "city" in selected:
-        parts.append(str(profile_city))
-    if not parts:
-        parts = [str(profile_code), str(profile_name)]
-    parts.append(f"tg:{message.from_user.id if message.from_user else 0}")
-    topic_name = " | ".join(parts)
-    topic_name = topic_name[:120]
-    try:
-        created = await message.bot.create_forum_topic(chat_id=target_chat_id, name=topic_name)
-    except Exception:
-        return int(default_topic_id)
-    topic_id = int(created.message_thread_id)
-    if message.from_user:
-        await topic_dialog_store.set_user_topic(
-            chat_id=target_chat_id,
-            platform=Platform.TELEGRAM.value,
-            platform_user_id=message.from_user.id,
-            topic_id=topic_id,
-        )
-    return topic_id

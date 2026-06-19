@@ -47,6 +47,12 @@ class CallbackCodec:
             raise CallbackAuthError("Invalid callback action")
         return action
 
+    def encode_public(self, action: str) -> str:
+        return self.encode(action, user_id=0)
+
+    def decode_public(self, raw_data: str) -> str:
+        return self.decode(raw_data, user_id=0)
+
 
 _ACTION_SHORT_MAP = {
     "admin": "a",
@@ -92,6 +98,9 @@ _ACTION_SHORT_MAP = {
     "profile:buyout_start": "pbs",
     "profile:buyout_orders": "pbo",
     "profile:buyout_filters": "pbf",
+    "questions": "q",
+    "process": "prc",
+    "processed": "prcd",
 }
 _ACTION_RESTORE_MAP = {value: key for key, value in _ACTION_SHORT_MAP.items()}
 

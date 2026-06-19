@@ -34,6 +34,7 @@ from app.services.admin_tools_service import (
     PaymentTextStore,
     ProhibitedGoodsStore,
     StaticContentStore,
+    TopicDialogStore,
     count_targets_for_platform,
     parse_codes,
     send_stored_media_to_telegram,
@@ -52,6 +53,7 @@ def build_admin_router(container: AppContainer) -> Router:
     profile_comment_store = AdminProfileCommentStore(container.settings.database.dsn)
     faq_media_store = FaqMediaStore(container.settings.database.dsn)
     group_topics_store = GroupTopicsStore(container.settings.database.dsn)
+    topic_dialog_store = TopicDialogStore(container.settings.database.dsn)
     delivery_store = StaticContentStore(
         database_dsn=container.settings.database.dsn,
         key="delivery_info",
@@ -199,10 +201,9 @@ def build_admin_router(container: AppContainer) -> Router:
             f"payment={payment_topic_id or '—'}, questions={questions_topic_id or '—'}, "
             f"buyout={buyout_topic_id or '—'}\n"
             f"VK logs peer_id={vk_logs_peer_id or 'не задан'}\n\n"
-            "Нажмите «Задать группу» и отправьте:\n"
-            "<code>-1001234567890</code>\n"
-            "или\n"
-            "<code>-1001234567890 42</code> (с topic_id)",
+            "Нажмите «Задать группу» и отправьте chat_id, например:\n"
+            "<code>-1001234567890</code>\n\n"
+            "После сохранения бот автоматически создаст темы: логи, оплата, вопросы, выкуп.",
             parse_mode="HTML",
         )
 
@@ -233,7 +234,7 @@ def build_admin_router(container: AppContainer) -> Router:
         state["awaiting_prohibited_text"] = False
         state["awaiting_prohibited_media"] = False
         await _save_admin_utils_state(container, session, state)
-        await message.answer("Отправьте chat_id [topic_id], например: -1001234567890 42")
+        await message.answer("Отправьте chat_id группы, например: -1001234567890")
 
     @router.message(F.text == "Создать темы")
     async def admin_group_create_topics(message: Message) -> None:
@@ -243,30 +244,36 @@ def build_admin_router(container: AppContainer) -> Router:
         if not chat_id:
             await message.answer("Сначала задайте группу через «Задать группу».")
             return
-        try:
-            topic_logs = await message.bot.create_forum_topic(chat_id=chat_id, name="логи")
-            topic_payment = await message.bot.create_forum_topic(chat_id=chat_id, name="оплата")
-            topic_questions = await message.bot.create_forum_topic(chat_id=chat_id, name="вопросы")
-            topic_buyout = await message.bot.create_forum_topic(chat_id=chat_id, name="выкуп")
-        except Exception:
+        topics = await _create_required_group_topics(
+            bot=message.bot,
+            chat_id=int(chat_id),
+            group_topics_store=group_topics_store,
+            backup_service=backup_service,
+            payment_target_store=payment_target_store,
+        )
+        if topics is None:
             await message.answer(
                 "Не удалось создать темы. Проверьте, что это форум-группа и у бота есть права управления темами."
             )
             return
-        await group_topics_store.set_tg_topics(
-            logs_topic_id=int(topic_logs.message_thread_id),
-            payment_topic_id=int(topic_payment.message_thread_id),
-            questions_topic_id=int(topic_questions.message_thread_id),
-            buyout_topic_id=int(topic_buyout.message_thread_id),
+        logs_topic_id, payment_topic_id, questions_topic_id, buyout_topic_id = topics
+        created_count, existed_count, failed_count = await _provision_topics_for_existing_telegram_profiles(
+            bot=message.bot,
+            chat_id=int(chat_id),
+            container=container,
+            group_topics_store=group_topics_store,
+            topic_dialog_store=topic_dialog_store,
         )
-        await backup_service.set_backup_target(chat_id=chat_id, topic_id=int(topic_logs.message_thread_id))
-        await payment_target_store.set_target(chat_id=chat_id, topic_id=int(topic_payment.message_thread_id))
         await message.answer(
             "Темы созданы:\n"
-            f"- логи: {topic_logs.message_thread_id}\n"
-            f"- оплата: {topic_payment.message_thread_id}\n"
-            f"- вопросы: {topic_questions.message_thread_id}\n"
-            f"- выкуп: {topic_buyout.message_thread_id}"
+            f"- логи: {logs_topic_id}\n"
+            f"- оплата: {payment_topic_id}\n"
+            f"- вопросы: {questions_topic_id}\n"
+            f"- выкуп: {buyout_topic_id}\n\n"
+            "Диалоги пользователей:\n"
+            f"- создано тем: {created_count}\n"
+            f"- уже существовали: {existed_count}\n"
+            f"- ошибок создания: {failed_count}"
         )
 
     @router.message(F.text == "Создать VK логи")
@@ -1064,28 +1071,49 @@ def build_admin_router(container: AppContainer) -> Router:
 
         if utils_state.get("awaiting_backup_target"):
             parts = message.text.split()
-            if len(parts) not in {1, 2}:
-                await message.answer("Формат: chat_id [topic_id], например: -1001234567890 42")
+            if len(parts) != 1:
+                await message.answer("Формат: chat_id, например: -1001234567890")
                 return
             try:
                 chat_id = int(parts[0])
-                topic_id = int(parts[1]) if len(parts) == 2 else None
             except ValueError:
-                await message.answer("chat_id и topic_id должны быть числами.")
+                await message.answer("chat_id должен быть числом.")
                 return
-            await backup_service.set_backup_target(chat_id=chat_id, topic_id=topic_id)
             await group_topics_store.set_tg_chat_id(chat_id)
-            if topic_id:
-                await group_topics_store.set_tg_topics(
-                    logs_topic_id=topic_id,
-                    payment_topic_id=topic_id,
-                    questions_topic_id=topic_id,
-                    buyout_topic_id=topic_id,
+            topics = await _create_required_group_topics(
+                bot=message.bot,
+                chat_id=chat_id,
+                group_topics_store=group_topics_store,
+                backup_service=backup_service,
+                payment_target_store=payment_target_store,
+            )
+            if topics is None:
+                await message.answer(
+                    "Не удалось создать темы. Проверьте, что группа с chat_id — форум, "
+                    "а у бота есть права управления темами."
                 )
+                return
+            logs_topic_id, payment_topic_id, questions_topic_id, buyout_topic_id = topics
+            created_count, existed_count, failed_count = await _provision_topics_for_existing_telegram_profiles(
+                bot=message.bot,
+                chat_id=chat_id,
+                container=container,
+                group_topics_store=group_topics_store,
+                topic_dialog_store=topic_dialog_store,
+            )
             utils_state["awaiting_backup_target"] = False
             await _save_admin_utils_state(container, session, utils_state)
             await message.answer(
-                f"Цель авто-бэкапов обновлена: chat_id={chat_id}, topic_id={topic_id or '—'}"
+                "Группа обновлена, темы созданы и подключены:\n"
+                f"- chat_id: {chat_id}\n"
+                f"- логи: {logs_topic_id}\n"
+                f"- оплата: {payment_topic_id}\n"
+                f"- вопросы: {questions_topic_id}\n"
+                f"- выкуп: {buyout_topic_id}\n\n"
+                "Диалоги пользователей:\n"
+                f"- создано тем: {created_count}\n"
+                f"- уже существовали: {existed_count}\n"
+                f"- ошибок создания: {failed_count}"
             )
             return
 
@@ -1868,7 +1896,7 @@ def build_admin_router(container: AppContainer) -> Router:
                 state["awaiting_backup_target"] = True
                 await _save_admin_utils_state(container, session, state)
                 await callback.answer()
-                await callback.message.answer("Отправьте chat_id [topic_id], например: -1001234567890 42")
+                await callback.message.answer("Отправьте chat_id группы, например: -1001234567890")
                 return
             if utils_action == "group:notifications":
                 settings = await notification_settings_store.get_settings()
@@ -4160,6 +4188,122 @@ def _media_items_summary(items: list[dict], limit: int = 20) -> str:
     if len(items) > limit:
         lines.append(f"... и еще {len(items) - limit}")
     return "\n".join(lines)
+
+
+async def _create_required_group_topics(
+    *,
+    bot,
+    chat_id: int,
+    group_topics_store: GroupTopicsStore,
+    backup_service: BackupService,
+    payment_target_store: PaymentReviewTargetStore,
+) -> tuple[int, int, int, int] | None:
+    logs_chat_id, logs_topic_id = await group_topics_store.get_tg_topic("logs")
+    payment_chat_id, payment_topic_id = await group_topics_store.get_tg_topic("payment")
+    questions_chat_id, questions_topic_id = await group_topics_store.get_tg_topic("questions")
+    buyout_chat_id, buyout_topic_id = await group_topics_store.get_tg_topic("buyout")
+    if (
+        int(logs_chat_id or 0) == int(chat_id)
+        and int(payment_chat_id or 0) == int(chat_id)
+        and int(questions_chat_id or 0) == int(chat_id)
+        and int(buyout_chat_id or 0) == int(chat_id)
+        and logs_topic_id
+        and payment_topic_id
+        and questions_topic_id
+        and buyout_topic_id
+    ):
+        await backup_service.set_backup_target(chat_id=chat_id, topic_id=int(logs_topic_id))
+        await payment_target_store.set_target(chat_id=chat_id, topic_id=int(payment_topic_id))
+        return int(logs_topic_id), int(payment_topic_id), int(questions_topic_id), int(buyout_topic_id)
+    try:
+        topic_logs = await bot.create_forum_topic(chat_id=chat_id, name="логи")
+        topic_payment = await bot.create_forum_topic(chat_id=chat_id, name="оплата")
+        topic_questions = await bot.create_forum_topic(chat_id=chat_id, name="вопросы")
+        topic_buyout = await bot.create_forum_topic(chat_id=chat_id, name="выкуп")
+    except Exception:
+        return None
+    logs_topic_id = int(topic_logs.message_thread_id)
+    payment_topic_id = int(topic_payment.message_thread_id)
+    questions_topic_id = int(topic_questions.message_thread_id)
+    buyout_topic_id = int(topic_buyout.message_thread_id)
+    await group_topics_store.set_tg_topics(
+        logs_topic_id=logs_topic_id,
+        payment_topic_id=payment_topic_id,
+        questions_topic_id=questions_topic_id,
+        buyout_topic_id=buyout_topic_id,
+    )
+    await backup_service.set_backup_target(chat_id=chat_id, topic_id=logs_topic_id)
+    await payment_target_store.set_target(chat_id=chat_id, topic_id=payment_topic_id)
+    return logs_topic_id, payment_topic_id, questions_topic_id, buyout_topic_id
+
+
+def _build_dialog_topic_name(profile: UserProfile, selected_parts: list[str]) -> str:
+    profile_code = profile.code or "—"
+    profile_name = (profile.name or "").strip() or "без имени"
+    profile_phone = (profile.phone or "").strip() or "без телефона"
+    profile_city = (profile.city or "").strip() or "без города"
+    parts: list[str] = []
+    if "code" in selected_parts:
+        parts.append(str(profile_code))
+    if "name" in selected_parts:
+        parts.append(str(profile_name))
+    if "phone" in selected_parts:
+        parts.append(str(profile_phone))
+    if "city" in selected_parts:
+        parts.append(str(profile_city))
+    if not parts:
+        parts = [str(profile_code), str(profile_name)]
+    tg_id = int(profile.telegram_user_id or 0)
+    parts.append(f"tg:{tg_id}")
+    return " | ".join(parts)[:120]
+
+
+async def _provision_topics_for_existing_telegram_profiles(
+    *,
+    bot,
+    chat_id: int,
+    container: AppContainer,
+    group_topics_store: GroupTopicsStore,
+    topic_dialog_store: TopicDialogStore,
+) -> tuple[int, int, int]:
+    created_count = 0
+    existed_count = 0
+    failed_count = 0
+    selected_parts = await group_topics_store.get_topic_name_parts()
+    page = 1
+    page_size = 200
+    while True:
+        chunk = await container.admin_service.list_profiles(page=page, page_size=page_size)
+        if not chunk:
+            break
+        for profile in chunk:
+            tg_user_id = int(profile.telegram_user_id or 0)
+            if tg_user_id <= 0:
+                continue
+            existing = await topic_dialog_store.get_user_topic(
+                chat_id=chat_id,
+                platform=Platform.TELEGRAM.value,
+                platform_user_id=tg_user_id,
+            )
+            if existing:
+                existed_count += 1
+                continue
+            topic_name = _build_dialog_topic_name(profile, selected_parts)
+            try:
+                created = await bot.create_forum_topic(chat_id=chat_id, name=topic_name)
+                await topic_dialog_store.set_user_topic(
+                    chat_id=chat_id,
+                    platform=Platform.TELEGRAM.value,
+                    platform_user_id=tg_user_id,
+                    topic_id=int(created.message_thread_id),
+                )
+                created_count += 1
+            except Exception:
+                failed_count += 1
+        if len(chunk) < page_size:
+            break
+        page += 1
+    return created_count, existed_count, failed_count
 
 
 async def _archive_media_in_group_topic(
