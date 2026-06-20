@@ -1372,7 +1372,7 @@ async def _mark_blocked_bot_if_needed(container: AppContainer, profile, error: E
             await container.profile_repo.save(profile)
 
 
-async def _capture_buyout_media_reference(message: Message) -> tuple[int | None, int | None, int | None]:
+def _capture_buyout_media_reference(message: Message) -> tuple[int | None, int | None, int | None]:
     """Сохраняем ссылку на медиа в личном чате (без копирования в группу)."""
     if not message.chat or not message.message_id:
         return None, None, None
