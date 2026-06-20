@@ -1,0 +1,88 @@
+"""Re-exports admin helper symbols for handler registration modules."""
+from app.bot.telegram.handlers.admin.broadcast import (
+    _broadcast_keyboard,
+    _dispatch_broadcast_media,
+    _dispatch_broadcast_text,
+)
+from app.bot.telegram.handlers.admin.group_topics import (
+    _archive_media_in_group_topic,
+    _create_required_group_topics,
+    _provision_topics_for_existing_telegram_profiles,
+    _refresh_group_topic_profile,
+)
+from app.bot.telegram.handlers.admin.html import _h
+from app.bot.telegram.handlers.admin.keyboards import (
+    _admin_root_inline_keyboard,
+    _admins_access_keyboard,
+    _admins_access_keyboard_with_back,
+    _backup_keyboard,
+    _backup_keyboard_with_back,
+    _codes_inline_keyboard,
+    _codes_keyboard,
+    _contacts_content_keyboard,
+    _content_keyboard,
+    _delivery_content_keyboard,
+    _group_keyboard,
+    _notification_settings_text,
+    _notifications_keyboard,
+    _notifications_keyboard_with_back,
+    _orders_root_keyboard,
+    _payment_group_keyboard,
+    _payment_inline_keyboard,
+    _payment_keyboard,
+    _prohibited_keyboard,
+    _utils_back_keyboard,
+    _utils_group_keyboard,
+    _utils_inline_keyboard,
+    _utils_keyboard,
+    _utils_topics_keyboard,
+)
+from app.bot.telegram.handlers.admin.media_helpers import (
+    _handle_media_text_command,
+    _mark_blocked_bot_if_needed,
+    _media_items_summary,
+)
+from app.bot.telegram.handlers.admin.navigation import _open_user_profile_from_admin
+from app.bot.telegram.handlers.admin.orders import (
+    _field_title,
+    _get_admin_orders_state,
+    _notify_order_status_change,
+    _order_field_value,
+    _order_status_name,
+    _orders_keyboard,
+    _parse_order_status,
+    _save_admin_orders_state,
+    _send_order_edit_panel,
+    _send_orders_panel,
+    _validate_field_input,
+)
+from app.bot.telegram.handlers.admin.profiles import (
+    _block_button,
+    _blocks_menu_keyboard,
+    _block_pick_keyboard,
+    _block_search_mode_keyboard,
+    _collect_profiles,
+    _migrate_profile_code_metadata,
+    _normalize_profile_code,
+    _parse_blocks_page,
+    _profile_actions_keyboard,
+    _profile_details,
+    _profile_edit_fields_keyboard,
+    _profiles_pagination,
+    _profiles_search_mode_keyboard,
+    _profiles_search_results_keyboard,
+    _render_blocked_page,
+    _render_unsubscribed_page,
+    _send_profiles_page,
+)
+from app.bot.telegram.handlers.admin.state import (
+    _clear_admin_input_states,
+    _get_admin_broadcast_state,
+    _get_admin_utils_state,
+    _reset_admin_utils_waiters,
+    _save_admin_broadcast_state,
+    _save_admin_utils_state,
+)
+from app.bot.telegram.handlers.admin.vk_sync import _sync_vk_attachment_from_tg
+
+__all__ = []  # star-import module

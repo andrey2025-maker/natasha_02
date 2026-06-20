@@ -197,9 +197,8 @@ def admin_menu_keyboard(is_main_admin: bool) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text="Профили"), KeyboardButton(text="Блокировки")],
         [KeyboardButton(text="Заказы"), KeyboardButton(text="Статистика")],
-        [KeyboardButton(text="Вопросы"), KeyboardButton(text="Запрещенка")],
-        [KeyboardButton(text="Контент"), KeyboardButton(text="Рассылка")],
-        [KeyboardButton(text="Утилиты")],
+        [KeyboardButton(text="Вопросы"), KeyboardButton(text="Контент")],
+        [KeyboardButton(text="Рассылка"), KeyboardButton(text="Утилиты")],
         [KeyboardButton(text="Список админов")],
     ]
     if is_main_admin:

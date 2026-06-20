@@ -771,6 +771,14 @@ class QuestionsAlertStore:
         await self._save(payload)
         return item
 
+    async def count_unanswered(self) -> int:
+        payload = await self._load()
+        return sum(
+            1
+            for item in payload.values()
+            if isinstance(item, dict) and not item.get("processed_at")
+        )
+
     async def _load(self) -> dict:
         payload = await self._db.get("questions_alerts")
         if not isinstance(payload, dict):
