@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import json
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -949,23 +950,53 @@ class BuyoutQuoteDraftStore:
         manager_comment: str,
         manager_user_id: int,
         group_message_id: int | None = None,
-    ) -> None:
+    ) -> str:
+        normalized_order = order_number.strip()
+        existing = await self.get(normalized_order)
+        if isinstance(existing, dict):
+            old_token = str(existing.get("draft_token") or "").strip()
+            if old_token:
+                await self._db.delete(self._token_key(old_token))
+        draft_token = secrets.token_urlsafe(6)[:10]
         await self._db.set(
-            self._key(order_number),
+            self._key(normalized_order),
             {
+                "order_number": normalized_order,
+                "draft_token": draft_token,
                 "price_rub": int(price_rub),
                 "manager_comment": manager_comment.strip(),
                 "manager_user_id": int(manager_user_id),
                 "group_message_id": int(group_message_id) if group_message_id else None,
             },
         )
+        await self._db.set(self._token_key(draft_token), normalized_order)
+        return draft_token
+
+    async def get_by_token(self, draft_token: str) -> dict | None:
+        token = draft_token.strip()
+        if not token:
+            return None
+        order_number = await self._db.get(self._token_key(token))
+        if isinstance(order_number, str) and order_number.strip():
+            return await self.get(order_number.strip())
+        return None
 
     async def clear(self, order_number: str) -> None:
-        await self._db.delete(self._key(order_number))
+        normalized_order = order_number.strip()
+        payload = await self.get(normalized_order)
+        if isinstance(payload, dict):
+            token = str(payload.get("draft_token") or "").strip()
+            if token:
+                await self._db.delete(self._token_key(token))
+        await self._db.delete(self._key(normalized_order))
 
     @staticmethod
     def _key(order_number: str) -> str:
         return f"buyout_quote:{order_number.strip()}"
+
+    @staticmethod
+    def _token_key(draft_token: str) -> str:
+        return f"buyout_draft_token:{draft_token.strip()}"
 
 
 @dataclass(slots=True)

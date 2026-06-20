@@ -222,7 +222,7 @@ def build_profile_router(container: AppContainer) -> Router:
         try:
             action = callback_codec.decode(callback.data, callback.from_user.id)
         except CallbackAuthError:
-            return
+            raise SkipHandler
         if action not in PROFILE_CALLBACK_ACTIONS:
             raise SkipHandler
         session = await container.profile_flow.get_or_create_session(platform, callback.from_user.id)

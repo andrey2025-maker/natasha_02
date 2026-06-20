@@ -185,7 +185,7 @@ def build_questions_router(container: AppContainer) -> Router:
         try:
             action = callback_codec.decode(callback.data, callback.from_user.id)
         except CallbackAuthError:
-            return
+            raise SkipHandler
         if not action.startswith("faq:"):
             raise SkipHandler
 

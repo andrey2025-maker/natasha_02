@@ -118,12 +118,12 @@ def build_buyout_router(container: AppContainer) -> Router:
             await callback.answer("Доступ ограничен", show_alert=True)
             return
         try:
-            action = callback_codec.decode(callback.data, callback.from_user.id)
+            action = callback_codec.decode_public(callback.data)
         except CallbackAuthError:
             try:
-                action = callback_codec.decode_public(callback.data)
+                action = callback_codec.decode(callback.data, callback.from_user.id)
             except CallbackAuthError:
-                return
+                raise SkipHandler
         if not action.startswith(
             (
                 "payreview:",
@@ -140,7 +140,7 @@ def build_buyout_router(container: AppContainer) -> Router:
             raise SkipHandler
         if action.startswith("buygroup:"):
             if action.startswith("buygroup:wait:"):
-                await callback.answer("Заявка ожидает обработки цены", show_alert=False)
+                await callback.answer("⏳ Заявка ожидает обработки цены", show_alert=True)
             else:
                 await callback.answer()
             return
@@ -174,7 +174,7 @@ def build_buyout_router(container: AppContainer) -> Router:
                     container,
                     order=updated,
                     status=OrderStatus.PAID,
-                    note="Оплата подтверждена администратором.",
+                    note="Платёж проверен и оплачен. В ближайшее время закажут товар.",
                 )
                 await callback.answer("Оплата подтверждена")
                 await callback.message.edit_reply_markup(
@@ -255,39 +255,45 @@ def build_buyout_router(container: AppContainer) -> Router:
                 await callback.answer("Некорректная команда", show_alert=True)
                 return
             draft_action = parts[1]
-            order_number = parts[2]
+            draft_ref = parts[2]
+            draft = await quote_draft_store.get_by_token(draft_ref)
+            if not draft:
+                draft = await quote_draft_store.get(draft_ref)
+            if not draft:
+                await callback.answer("Черновик цены не найден. Ответьте на заявку с ценой заново.", show_alert=True)
+                return
+            order_number = str(draft.get("order_number") or draft_ref).strip()
             order = await container.order_admin_service.get_order(order_number)
             if not order:
                 await callback.answer("Заказ не найден", show_alert=True)
                 return
-            draft = await quote_draft_store.get(order_number)
-            if not draft:
-                await callback.answer("Черновик цены не найден", show_alert=True)
-                return
             if draft_action == "send":
-                price_rub = int(draft.get("price_rub") or 0)
-                manager_comment = str(draft.get("manager_comment") or "").strip()
+                price_rub = int(draft.get("price_rub") or order.price_rub or 0)
+                manager_comment = str(draft.get("manager_comment") or order.manager_comment or "").strip()
                 profile = await container.profile_repo.get_by_id(order.user_profile_id)
                 if not profile or not profile.telegram_user_id:
-                    await callback.answer("Пользователь недоступен", show_alert=True)
+                    await callback.answer("У клиента нет Telegram — отправить цену нельзя.", show_alert=True)
+                    return
+                if price_rub <= 0:
+                    await callback.answer("Сначала укажите цену ответом на заявку.", show_alert=True)
                     return
                 updated = await container.order_admin_service.set_status(
                     order_number=order_number,
-                    new_status=OrderStatus.PRICE_READY,
+                    new_status=OrderStatus.WAITING_PAYMENT,
                     changed_by_user_id=callback.from_user.id,
                     note="quote sent to user",
                     platform=Platform.TELEGRAM,
                 )
                 if not updated:
-                    await callback.answer("Не удалось обновить", show_alert=True)
+                    await callback.answer("Не удалось обновить статус заказа.", show_alert=True)
                     return
                 keyboard = InlineKeyboardMarkup(
                     inline_keyboard=[
                         [
                             InlineKeyboardButton(
-                                text="✅ Подтвердить",
+                                text="💳 Оплатить",
                                 callback_data=callback_codec.encode(
-                                    f"orderquote:confirm:{order_number}",
+                                    f"orderquote:pay:{order_number}",
                                     int(profile.telegram_user_id),
                                 ),
                             ),
@@ -302,15 +308,12 @@ def build_buyout_router(container: AppContainer) -> Router:
                     ]
                 )
                 text = (
-                    f"По заказу <b>№{_h(order_number)}</b> готова цена.\n"
+                    f"По заказу <b>№{_h(order_number)}</b>\n"
                     f"Стоимость: <b>{price_rub} ₽</b>."
                 )
                 if manager_comment:
                     text += f"\nКомментарий: {_h(manager_comment)}"
-                text += (
-                    "\n\nПодтвердите заказ или отмените.\n"
-                    "<b>Если есть вопросы пишите прям тут в чате</b>"
-                )
+                text += "\n\n<b>Если есть вопросы по заказу пишите прямо сюда</b>"
                 try:
                     await callback.bot.send_message(
                         chat_id=int(profile.telegram_user_id),
@@ -319,13 +322,12 @@ def build_buyout_router(container: AppContainer) -> Router:
                         reply_markup=keyboard,
                     )
                 except Exception:
-                    await callback.answer("Не удалось отправить клиенту", show_alert=True)
+                    await callback.answer("Не удалось отправить клиенту. Клиент мог заблокировать бота.", show_alert=True)
                     return
                 await callback.answer("Отправлено клиенту")
-                profile_for_group = profile
                 group_text = _format_buyout_group_order_text(
                     order,
-                    profile_for_group,
+                    profile,
                     price_rub=price_rub,
                     manager_comment=manager_comment,
                     footer="📤 Отправлено клиенту",
@@ -486,6 +488,8 @@ def build_buyout_router(container: AppContainer) -> Router:
             if quote_action == "pay":
                 instruction = await payment_store.get_text()
                 payment_media_items = await payment_store.get_media_items()
+                price_rub = int(order.price_rub or 0)
+                manager_comment = (order.manager_comment or "").strip()
                 keyboard = InlineKeyboardMarkup(
                     inline_keyboard=[
                         [
@@ -500,8 +504,22 @@ def build_buyout_router(container: AppContainer) -> Router:
                         ]
                     ]
                 )
+                pay_text = instruction
+                if price_rub:
+                    pay_text = (
+                        f"Заказ <b>№{_h(order_number)}</b> — <b>{price_rub} ₽</b>.\n\n"
+                        f"{instruction}\n\n"
+                        "<b>Если есть вопросы по заказу пишите прямо сюда</b>"
+                    )
+                if manager_comment and price_rub:
+                    pay_text = pay_text.replace(
+                        f"{instruction}\n\n",
+                        f"{instruction}\nКомментарий: {_h(manager_comment)}\n\n",
+                        1,
+                    )
                 await callback.answer()
-                await callback.message.answer(instruction, parse_mode="HTML", reply_markup=keyboard)
+                await callback.message.edit_reply_markup(reply_markup=None)
+                await callback.message.answer(pay_text, parse_mode="HTML", reply_markup=keyboard)
                 for payment_media in payment_media_items:
                     await send_stored_media_to_telegram(callback.bot, callback.from_user.id, payment_media)
                 return
@@ -537,7 +555,7 @@ def build_buyout_router(container: AppContainer) -> Router:
                     container,
                     order=updated,
                     status=OrderStatus.PAID,
-                    note="Оплата подтверждена администратором.",
+                    note="Платёж проверен и оплачен. В ближайшее время закажут товар.",
                 )
                 await callback.answer("Оплата подтверждена")
                 await callback.message.edit_text(
@@ -622,7 +640,7 @@ def build_buyout_router(container: AppContainer) -> Router:
                 await callback.answer("Платеж отправлен на проверку")
                 await callback.message.edit_reply_markup(reply_markup=None)
                 await callback.message.answer(
-                    f"Заявка <b>{order_number}</b> помечена как «Проверка оплаты».",
+                    "Платёж будет проверен. После проверки будет заказан товар.",
                     parse_mode="HTML",
                 )
                 await _notify_admin_payment_event(
@@ -890,7 +908,7 @@ def build_buyout_router(container: AppContainer) -> Router:
             await message.reply("Не удалось сохранить цену.")
             return
 
-        await quote_draft_store.save(
+        draft_token = await quote_draft_store.save(
             order_number=order_number,
             price_rub=price_rub,
             manager_comment=comment,
@@ -904,7 +922,7 @@ def build_buyout_router(container: AppContainer) -> Router:
             manager_comment=comment,
         )
         keyboard = _buyout_group_draft_keyboard(
-            order_number=order_number,
+            draft_token=draft_token,
             codec=callback_codec,
         )
         try:
@@ -1207,7 +1225,7 @@ def _buyout_group_waiting_keyboard(order_number: str, codec: CallbackCodec) -> I
 
 def _buyout_group_draft_keyboard(
     *,
-    order_number: str,
+    draft_token: str,
     codec: CallbackCodec,
 ) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -1215,11 +1233,11 @@ def _buyout_group_draft_keyboard(
             [
                 InlineKeyboardButton(
                     text="📤 Отправить",
-                    callback_data=codec.encode_public(f"buydraft:send:{order_number}"),
+                    callback_data=codec.encode_public(f"buydraft:send:{draft_token}"),
                 ),
                 InlineKeyboardButton(
                     text="❌ Отменить",
-                    callback_data=codec.encode_public(f"buydraft:reset:{order_number}"),
+                    callback_data=codec.encode_public(f"buydraft:reset:{draft_token}"),
                 ),
             ]
         ]
