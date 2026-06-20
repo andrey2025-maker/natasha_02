@@ -6,7 +6,11 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from app.bot.telegram.callbacks import CallbackCodec
 from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.message_html import extract_message_html
-from app.services.admin_tools_service import ProhibitedGoodsStore, StaticContentStore
+from app.services.admin_tools_service import (
+    ProhibitedGoodsStore,
+    StaticContentStore,
+    send_content_with_media_to_telegram,
+)
 
 SCREEN_VIEW = "view"
 SCREEN_EDIT_MENU = "edit_menu"
@@ -61,6 +65,12 @@ def _section_meta(kind: str) -> tuple[str, str]:
     raise ValueError(f"Unknown content kind: {kind}")
 
 
+def _enter_edit_mode(utils_state: dict, kind: str) -> None:
+    utils_state["content_utils_kind"] = kind
+    utils_state["content_utils_screen"] = SCREEN_EDIT_TEXT
+    utils_state["awaiting_content_utils_media"] = kind
+
+
 async def open_content_utils_panel(
     message: Message,
     *,
@@ -86,6 +96,17 @@ async def open_content_utils_panel(
     )
 
 
+async def _delete_panel_message(message: Message, utils_state: dict) -> None:
+    chat_id = utils_state.get("content_utils_panel_chat_id")
+    panel_message_id = utils_state.get("content_utils_panel_message_id")
+    if not chat_id or not panel_message_id:
+        return
+    try:
+        await message.bot.delete_message(int(chat_id), int(panel_message_id))
+    except Exception:
+        pass
+
+
 async def refresh_content_utils_panel(
     *,
     message: Message,
@@ -96,6 +117,13 @@ async def refresh_content_utils_panel(
     contacts_store: StaticContentStore,
     force_new: bool = False,
 ) -> None:
+    kind = str(utils_state.get("content_utils_kind") or "")
+    store = _store_for_kind(
+        kind,
+        prohibited_store=prohibited_store,
+        contacts_store=contacts_store,
+    )
+    media_items = await store.get_media_items()
     text, keyboard = await _build_panel(
         utils_state=utils_state,
         codec=codec,
@@ -105,7 +133,25 @@ async def refresh_content_utils_panel(
     )
     chat_id = int(utils_state.get("content_utils_panel_chat_id") or message.chat.id)
     panel_message_id = utils_state.get("content_utils_panel_message_id")
-    if not force_new and panel_message_id:
+
+    async def _send_fresh() -> None:
+        await _delete_panel_message(message, utils_state)
+        sent = await send_content_with_media_to_telegram(
+            message,
+            text=text,
+            media_items=media_items,
+            reply_markup=keyboard,
+        )
+        if sent is None:
+            sent = await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+        utils_state["content_utils_panel_chat_id"] = int(sent.chat.id)
+        utils_state["content_utils_panel_message_id"] = int(sent.message_id)
+
+    if force_new or media_items:
+        await _send_fresh()
+        return
+
+    if panel_message_id:
         try:
             await message.bot.edit_message_text(
                 chat_id=chat_id,
@@ -119,16 +165,16 @@ async def refresh_content_utils_panel(
             error_text = str(exc).lower()
             if "message is not modified" in error_text:
                 return
-            if int(panel_message_id) == int(message.message_id):
-                await edit_panel_message(
-                    message,
-                    text=text,
-                    reply_markup=keyboard,
-                )
-                return
-    sent = await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
-    utils_state["content_utils_panel_chat_id"] = int(sent.chat.id)
-    utils_state["content_utils_panel_message_id"] = int(sent.message_id)
+
+    if panel_message_id and int(panel_message_id) == int(message.message_id):
+        await edit_panel_message(
+            message,
+            text=text,
+            reply_markup=keyboard,
+        )
+        return
+
+    await _send_fresh()
 
 
 async def handle_content_utils_callback(
@@ -174,38 +220,8 @@ async def handle_content_utils_callback(
         )
         return True
 
-    if suffix == "edit":
-        utils_state["content_utils_kind"] = kind
-        utils_state["content_utils_screen"] = SCREEN_EDIT_MENU
-        await callback.answer()
-        await refresh_content_utils_panel(
-            message=callback.message,
-            codec=codec,
-            user_id=user_id,
-            utils_state=utils_state,
-            prohibited_store=prohibited_store,
-            contacts_store=contacts_store,
-        )
-        return True
-
-    if suffix == "text":
-        utils_state["content_utils_kind"] = kind
-        utils_state["content_utils_screen"] = SCREEN_EDIT_TEXT
-        await callback.answer()
-        await refresh_content_utils_panel(
-            message=callback.message,
-            codec=codec,
-            user_id=user_id,
-            utils_state=utils_state,
-            prohibited_store=prohibited_store,
-            contacts_store=contacts_store,
-        )
-        return True
-
-    if suffix == "media":
-        utils_state["content_utils_kind"] = kind
-        utils_state["content_utils_screen"] = SCREEN_EDIT_MEDIA
-        utils_state["awaiting_content_utils_media"] = kind
+    if suffix in {"edit", "text", "media"}:
+        _enter_edit_mode(utils_state, kind)
         await callback.answer()
         await refresh_content_utils_panel(
             message=callback.message,
@@ -218,7 +234,7 @@ async def handle_content_utils_callback(
         return True
 
     if suffix == "media_done":
-        utils_state["content_utils_screen"] = SCREEN_EDIT_MENU
+        utils_state["content_utils_screen"] = SCREEN_VIEW
         utils_state["awaiting_content_utils_media"] = None
         await callback.answer("Сохранено")
         await refresh_content_utils_panel(
@@ -238,8 +254,7 @@ async def handle_content_utils_callback(
             contacts_store=contacts_store,
         )
         await store.clear_media()
-        utils_state["content_utils_kind"] = kind
-        utils_state["content_utils_screen"] = SCREEN_EDIT_MENU
+        _enter_edit_mode(utils_state, kind)
         await callback.answer("Медиа очищено")
         await refresh_content_utils_panel(
             message=callback.message,
@@ -294,7 +309,6 @@ async def try_handle_content_utils_text(
         contacts_store=contacts_store,
     )
     await store.save_text(html_text)
-    utils_state["content_utils_screen"] = SCREEN_EDIT_MENU
     await refresh_content_utils_panel(
         message=message,
         codec=codec,
@@ -303,7 +317,6 @@ async def try_handle_content_utils_text(
         prohibited_store=prohibited_store,
         contacts_store=contacts_store,
     )
-    await message.answer("Текст сохранён.")
     return True
 
 
@@ -319,10 +332,7 @@ async def _handle_back(
 ) -> None:
     screen = str(utils_state.get("content_utils_screen") or SCREEN_VIEW)
     if screen in {SCREEN_EDIT_MENU, SCREEN_EDIT_TEXT, SCREEN_EDIT_MEDIA}:
-        if screen == SCREEN_EDIT_MENU:
-            utils_state["content_utils_screen"] = SCREEN_VIEW
-        else:
-            utils_state["content_utils_screen"] = SCREEN_EDIT_MENU
+        utils_state["content_utils_screen"] = SCREEN_VIEW
         utils_state["awaiting_content_utils_media"] = None
         await callback.answer()
         await refresh_content_utils_panel(
@@ -339,12 +349,32 @@ async def _handle_back(
     utils_state["content_utils_screen"] = None
     utils_state["awaiting_content_utils_media"] = None
     await callback.answer()
-    from app.bot.telegram.handlers.admin.keyboards import _utils_inline_keyboard
+    from app.bot.telegram.handlers.admin.keyboards import UTILS_PANEL_TEXT, _utils_inline_keyboard
 
     await edit_panel_message(
         callback.message,
-        text="🧰 Утилиты админки.\nВыберите подраздел:",
+        text=UTILS_PANEL_TEXT,
         reply_markup=_utils_inline_keyboard(user_id, codec),
+    )
+
+
+def _edit_keyboard(kind: str, codec: CallbackCodec, user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Готово",
+                    callback_data=_encode(codec, user_id, kind, "media_done"),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Очистить медиа",
+                    callback_data=_encode(codec, user_id, kind, "clear"),
+                )
+            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data=_encode(codec, user_id, kind, "back"))],
+        ]
     )
 
 
@@ -365,69 +395,20 @@ async def _build_panel(
         contacts_store=contacts_store,
     )
     body = await store.get_text()
-    media_items = await store.get_media_items()
-    media_count = len(media_items)
+    preview = body.strip() if body.strip() else "—"
 
     if screen == SCREEN_EDIT_TEXT:
         text = (
             f"{title}\n\n"
-            "<b>Редактирование текста</b>\n\n"
+            "<b>Редактирование</b>\n\n"
+            f"{preview}\n\n"
             "Отправьте новый текст одним сообщением.\n"
-            "Поддерживаются жирный, курсив и подчёркнутый шрифт из Telegram."
+            "Отправляйте фото, видео или GIF.\n"
+            "Когда закончите — нажмите «Готово»."
         )
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data=_encode(codec, user_id, kind, "back"))]
-            ]
-        )
-        return text, keyboard
+        return text, _edit_keyboard(kind, codec, user_id)
 
-    if screen == SCREEN_EDIT_MEDIA:
-        text = (
-            f"{title}\n\n"
-            "<b>Добавление медиа</b>\n\n"
-            f"Медиа сейчас: {media_count}\n\n"
-            "Отправляйте фото, видео или GIF. Когда закончите — нажмите «Готово медиа»."
-        )
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="Готово медиа",
-                        callback_data=_encode(codec, user_id, kind, "media_done"),
-                    )
-                ],
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data=_encode(codec, user_id, kind, "back"))],
-            ]
-        )
-        return text, keyboard
-
-    if screen == SCREEN_EDIT_MENU:
-        preview = body.strip() if body.strip() else "—"
-        text = (
-            f"{title}\n\n"
-            f"<b>Текущий текст:</b>\n{preview}\n\n"
-            f"<b>Медиа:</b> {media_count}"
-        )
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="Ред. текст", callback_data=_encode(codec, user_id, kind, "text")),
-                    InlineKeyboardButton(text="Доб. медиа", callback_data=_encode(codec, user_id, kind, "media")),
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="Очистить медиа",
-                        callback_data=_encode(codec, user_id, kind, "clear"),
-                    )
-                ],
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data=_encode(codec, user_id, kind, "back"))],
-            ]
-        )
-        return text, keyboard
-
-    preview = body.strip() if body.strip() else "—"
-    text = f"{title}\n\n{preview}\n\n<b>Медиа:</b> {media_count}"
+    text = f"{title}\n\n{preview}"
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="Редактировать", callback_data=_encode(codec, user_id, kind, "edit"))],

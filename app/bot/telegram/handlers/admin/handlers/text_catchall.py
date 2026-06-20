@@ -28,6 +28,7 @@ from app.bot.telegram.handlers.admin.context import AdminContext
 from app.bot.telegram.handlers.content_utils_admin import (
     SCREEN_EDIT_MEDIA as CONTENT_UTILS_EDIT_MEDIA,
     SCREEN_EDIT_MENU as CONTENT_UTILS_EDIT_MENU,
+    SCREEN_EDIT_TEXT as CONTENT_UTILS_EDIT_TEXT,
     handle_content_utils_callback,
     refresh_content_utils_panel,
     reset_content_utils_state,
@@ -176,22 +177,6 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
                 )
             return
 
-        if utils_state.get("awaiting_content_utils_media"):
-            await message.answer(
-                "Сейчас ожидается медиа. Отправьте фото, видео или GIF, "
-                "либо нажмите «Готово медиа» в сообщении выше."
-            )
-            return
-
-        if utils_state.get("awaiting_faq_media_section_id"):
-            if str(utils_state.get("faq_admin_screen") or "") == SCREEN_EDIT_MEDIA:
-                await message.answer(
-                    "Сейчас ожидается медиа. Отправьте фото, видео или GIF, "
-                    "либо нажмите «Готово медиа» в сообщении выше."
-                )
-                return
-            return
-
         if await try_handle_content_utils_text(
             message,
             codec=callback_codec,
@@ -200,6 +185,22 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
             contacts_store=contacts_store,
         ):
             await _save_admin_utils_state(container, session, utils_state)
+            return
+
+        if utils_state.get("awaiting_content_utils_media"):
+            if str(utils_state.get("content_utils_screen") or "") != CONTENT_UTILS_EDIT_TEXT:
+                await message.answer(
+                    "Сейчас ожидается медиа. Отправьте фото, видео или GIF, "
+                    "либо нажмите «Готово» в сообщении выше."
+                )
+            return
+
+        if utils_state.get("awaiting_faq_media_section_id"):
+            if str(utils_state.get("faq_admin_screen") or "") == SCREEN_EDIT_MEDIA:
+                await message.answer(
+                    "Сейчас ожидается медиа. Отправьте фото, видео или GIF, "
+                    "либо нажмите «Готово медиа» в сообщении выше."
+                )
             return
 
         if await try_handle_faq_admin_text(

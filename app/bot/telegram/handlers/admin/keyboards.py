@@ -4,24 +4,31 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardBu
 
 from app.bot.telegram.callbacks import CallbackCodec
 
+UTILS_PANEL_TEXT = (
+    "🛠 Утилиты админки\n"
+    "Тонкая настройка и управление\n"
+    "Выберите инструмент:"
+)
+
+
 def _utils_inline_keyboard(user_id: int, codec: CallbackCodec) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Группа", callback_data=codec.encode("admin:utils:group", user_id)),
-                InlineKeyboardButton(text="Рефералка", callback_data=codec.encode("admin:utils:ref", user_id)),
+                InlineKeyboardButton(text="👥 Группы", callback_data=codec.encode("admin:utils:group", user_id)),
+                InlineKeyboardButton(text="🤝 Рефералы", callback_data=codec.encode("admin:utils:ref", user_id)),
             ],
             [
-                InlineKeyboardButton(text="Бэкапы", callback_data=codec.encode("admin:utils:backups", user_id)),
-                InlineKeyboardButton(text="Админы", callback_data=codec.encode("admin:utils:admins", user_id)),
+                InlineKeyboardButton(text="💾 Бэкапы", callback_data=codec.encode("admin:utils:backups", user_id)),
+                InlineKeyboardButton(text="👑 Админы", callback_data=codec.encode("admin:utils:admins", user_id)),
             ],
             [
-                InlineKeyboardButton(text="Коды", callback_data=codec.encode("admin:utils:codes", user_id)),
-                InlineKeyboardButton(text="Оплата", callback_data=codec.encode("admin:utils:payment", user_id)),
+                InlineKeyboardButton(text="🔑 Коды", callback_data=codec.encode("admin:utils:codes", user_id)),
+                InlineKeyboardButton(text="💳 Оплата", callback_data=codec.encode("admin:utils:payment", user_id)),
             ],
             [
-                InlineKeyboardButton(text="Контакты", callback_data=codec.encode("admin:utils:contacts", user_id)),
-                InlineKeyboardButton(text="Запрещенка", callback_data=codec.encode("admin:utils:prohibited", user_id)),
+                InlineKeyboardButton(text="📇 Контакты", callback_data=codec.encode("admin:utils:contacts", user_id)),
+                InlineKeyboardButton(text="🔞 Запрещёнка", callback_data=codec.encode("admin:utils:prohibited", user_id)),
             ],
         ]
     )

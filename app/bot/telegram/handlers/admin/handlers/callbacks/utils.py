@@ -106,8 +106,9 @@ def register_utils_callbacks(router: Router, ctx: AdminContext) -> None:
                     return
             if utils_action == "root":
                 await callback.answer()
-                await edit_panel_message(callback.message, text=
-                    "🧰 Утилиты админки.\nВыберите подраздел:",
+                await edit_panel_message(
+                    callback.message,
+                    text=UTILS_PANEL_TEXT,
                     reply_markup=_utils_inline_keyboard(callback.from_user.id, callback_codec),
                 )
                 return

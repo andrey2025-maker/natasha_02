@@ -28,6 +28,8 @@ from app.bot.telegram.handlers.admin.context import AdminContext
 from app.bot.telegram.handlers.content_utils_admin import (
     SCREEN_EDIT_MEDIA as CONTENT_UTILS_EDIT_MEDIA,
     SCREEN_EDIT_MENU as CONTENT_UTILS_EDIT_MENU,
+    SCREEN_EDIT_TEXT as CONTENT_UTILS_EDIT_TEXT,
+    SCREEN_VIEW,
     handle_content_utils_callback,
     refresh_content_utils_panel,
     reset_content_utils_state,
@@ -445,8 +447,11 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
         ):
             await message.answer("Режим добавления медиа сейчас не активен.")
             return
-        if state.get("awaiting_content_utils_media") and str(state.get("content_utils_screen") or "") == CONTENT_UTILS_EDIT_MEDIA:
-            state["content_utils_screen"] = CONTENT_UTILS_EDIT_MENU
+        if state.get("awaiting_content_utils_media") and str(state.get("content_utils_screen") or "") in {
+            CONTENT_UTILS_EDIT_MEDIA,
+            CONTENT_UTILS_EDIT_TEXT,
+        }:
+            state["content_utils_screen"] = SCREEN_VIEW
             state["awaiting_content_utils_media"] = None
             await _save_admin_utils_state(container, session, state)
             await refresh_content_utils_panel(

@@ -168,6 +168,6 @@ def register_menu_messages(router: Router, ctx: AdminContext) -> None:
         if not await _ensure_admin(message):
             return
         await message.answer(
-            "🧰 Утилиты админки.\n"
-            "Разделы: «Бэкапы», «Коды», «Группа», «Оплата», «Оплаты группа».",
+            UTILS_PANEL_TEXT,
+            reply_markup=_utils_inline_keyboard(message.from_user.id, callback_codec),
         )
