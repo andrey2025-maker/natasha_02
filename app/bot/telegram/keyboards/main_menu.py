@@ -174,3 +174,20 @@ def buyout_add_more_keyboard() -> ReplyKeyboardMarkup:
         ],
         resize_keyboard=True,
     )
+
+
+def buyout_add_more_inline_keyboard(*, user_id: int, codec: CallbackCodec) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="➕ Ещё товар",
+                    callback_data=codec.encode("buyout:add:more", user_id),
+                ),
+                InlineKeyboardButton(
+                    text="✅ Нет",
+                    callback_data=codec.encode("buyout:add:done", user_id),
+                ),
+            ]
+        ]
+    )

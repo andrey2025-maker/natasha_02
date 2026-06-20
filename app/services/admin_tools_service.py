@@ -649,6 +649,52 @@ class GroupTopicsStore:
         topic_raw = data.get(topic_key)
         return chat_id, (int(topic_raw) if topic_raw else None)
 
+    async def ensure_tg_topic(self, bot, kind: str, *, title: str | None = None) -> tuple[int | None, int | None]:
+        default_titles = {
+            "logs": "логи",
+            "payment": "оплата",
+            "questions": "вопросы",
+            "buyout": "Выкупы",
+        }
+        key_map = {
+            "logs": "tg_logs_topic_id",
+            "payment": "tg_payment_topic_id",
+            "questions": "tg_questions_topic_id",
+            "buyout": "tg_buyout_topic_id",
+        }
+        topic_key = key_map.get(kind)
+        if not topic_key:
+            return None, None
+        chat_id, topic_id = await self.get_tg_topic(kind)
+        if not chat_id:
+            return None, None
+        if topic_id:
+            return int(chat_id), int(topic_id)
+        topic_name = (title or default_titles.get(kind) or kind).strip()
+        if not topic_name:
+            return int(chat_id), None
+        try:
+            created = await bot.create_forum_topic(chat_id=int(chat_id), name=topic_name)
+            topic_id = int(created.message_thread_id)
+        except Exception:
+            return int(chat_id), None
+        data = await self.get()
+        data[topic_key] = topic_id
+        await self._save(data)
+        return int(chat_id), topic_id
+
+    async def ensure_all_system_topics(self, bot) -> dict[str, int] | None:
+        chat_id, _ = await self.get_tg_topic("logs")
+        if not chat_id:
+            return None
+        result: dict[str, int] = {"chat_id": int(chat_id)}
+        for kind in ("logs", "payment", "questions", "buyout"):
+            _, topic_id = await self.ensure_tg_topic(bot, kind)
+            if not topic_id:
+                return None
+            result[kind] = int(topic_id)
+        return result
+
     async def set_vk_logs_peer_id(self, peer_id: int) -> None:
         data = await self.get()
         data["vk_logs_peer_id"] = int(peer_id)
@@ -920,6 +966,32 @@ class BuyoutQuoteDraftStore:
     @staticmethod
     def _key(order_number: str) -> str:
         return f"buyout_quote:{order_number.strip()}"
+
+
+@dataclass(slots=True)
+class PaymentRejectPendingStore:
+    database_dsn: str
+
+    @property
+    def _db(self) -> DbSettingsStore:
+        return DbSettingsStore(self.database_dsn)
+
+    async def set_pending(self, *, chat_id: int, message_id: int, order_number: str) -> None:
+        await self._db.set(
+            self._key(chat_id, message_id),
+            {"order_number": order_number.strip()},
+        )
+
+    async def get(self, *, chat_id: int, message_id: int) -> dict | None:
+        payload = await self._db.get(self._key(chat_id, message_id))
+        return payload if isinstance(payload, dict) else None
+
+    async def clear(self, *, chat_id: int, message_id: int) -> None:
+        await self._db.delete(self._key(chat_id, message_id))
+
+    @staticmethod
+    def _key(chat_id: int, message_id: int) -> str:
+        return f"payment_reject_pending:{int(chat_id)}:{int(message_id)}"
 
 
 @dataclass(slots=True)

@@ -155,8 +155,7 @@ class BuyoutFlowService:
             return BuyoutFlowResponse(
                 text=(
                     "Данные отправлены на обработку цены.\n"
-                    "<b>Добавить еще товар на выкуп?</b>\n"
-                    "Ответьте: «Ещё товар» или «Нет»."
+                    "<b>Добавить еще товар на выкуп?</b>"
                 ),
                 state=session.state,
                 state_data={},
