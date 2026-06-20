@@ -187,7 +187,7 @@ class BuyoutFlowService:
         if not profile:
             return BuyoutFlowResponse("Сначала заполните профиль.", DialogState.IDLE, {})
 
-        statuses = self._get_active_filter_values(session)
+        statuses = self._get_query_statuses(session)
         all_orders = await self._orders.list_for_user(profile.id, limit=1000, offset=0, statuses=statuses)
         total = len(all_orders)
         if total == 0:
@@ -202,7 +202,7 @@ class BuyoutFlowService:
             orders = await self._orders.list_for_user(profile.id, limit=page_size, offset=offset, statuses=statuses)
 
         lines: list[str] = []
-        for idx, order in enumerate(orders, start=1 + offset):
+        for order in orders:
             history = await self._orders.list_status_history(order.id, limit=3)
             history_text = _format_history_short(history)
             media_items = await self._orders.list_order_media(order.id)
@@ -222,16 +222,11 @@ class BuyoutFlowService:
                 ]
             )
             order_block = "\n".join(order_lines)
-            lines.append(
-                f"{idx}.\n"
-                f"<tg-spoiler>{order_block}</tg-spoiler>"
-            )
+            lines.append(f"<blockquote expandable>{order_block}</blockquote>")
 
         total_pages = (total + page_size - 1) // page_size
-        filters_text = self._filters_summary_text(session)
         text = (
-            "Ваши заказы:\n"
-            f"{filters_text}\n\n"
+            "<b>Мои заказы</b>\n\n"
             + "\n\n".join(lines)
             + f"\n\nСтраница {safe_page}/{total_pages}"
         )
@@ -242,15 +237,17 @@ class BuyoutFlowService:
         )
 
     async def toggle_status_filter(self, session: UserSession, status: OrderStatus) -> None:
+        if status not in _MY_ORDERS_FILTER_STATUSES:
+            return
         await self._hydrate_preferences(session)
         prefs = self._get_preferences(session)
-        active = set(prefs.get("order_filters", [item.value for item in OrderStatus]))
+        active = set(prefs.get("order_filters", [item.value for item in _MY_ORDERS_FILTER_STATUSES]))
         if status.value in active:
             active.discard(status.value)
         else:
             active.add(status.value)
         if not active:
-            active = {item.value for item in OrderStatus}
+            active = {item.value for item in _MY_ORDERS_FILTER_STATUSES}
         prefs["order_filters"] = sorted(active)
         session.state_data = self._merge_preferences(session.state_data, prefs)
         await self._sessions.save(session)
@@ -263,7 +260,7 @@ class BuyoutFlowService:
     async def reset_status_filters(self, session: UserSession) -> None:
         await self._hydrate_preferences(session)
         prefs = self._get_preferences(session)
-        prefs["order_filters"] = [item.value for item in OrderStatus]
+        prefs["order_filters"] = [item.value for item in _MY_ORDERS_FILTER_STATUSES]
         session.state_data = self._merge_preferences(session.state_data, prefs)
         await self._sessions.save(session)
         await self._preferences.save_order_filters(
@@ -274,7 +271,7 @@ class BuyoutFlowService:
 
     def filter_states(self, session: UserSession) -> dict[OrderStatus, bool]:
         active = set(self._get_active_filter_values(session))
-        return {status: status.value in active for status in OrderStatus}
+        return {status: status.value in active for status in _MY_ORDERS_FILTER_STATUSES}
 
     async def prepare_preferences(self, session: UserSession) -> None:
         await self._hydrate_preferences(session)
@@ -300,9 +297,17 @@ class BuyoutFlowService:
         prefs = self._get_preferences(session)
         raw = prefs.get("order_filters")
         if not raw:
-            return [item.value for item in OrderStatus]
-        values = [str(item) for item in raw if str(item) in {status.value for status in OrderStatus}]
-        return values or [item.value for item in OrderStatus]
+            return [item.value for item in _MY_ORDERS_FILTER_STATUSES]
+        values = [str(item) for item in raw if str(item) in {status.value for status in _MY_ORDERS_FILTER_STATUSES}]
+        return values or [item.value for item in _MY_ORDERS_FILTER_STATUSES]
+
+    def _get_query_statuses(self, session: UserSession) -> list[str]:
+        active = set(self._get_active_filter_values(session))
+        statuses = {item.value for item in _MY_ORDERS_ALWAYS_VISIBLE}
+        for status in _MY_ORDERS_FILTER_STATUSES:
+            if status.value in active:
+                statuses.add(status.value)
+        return sorted(statuses)
 
     def _filters_summary_text(self, session: UserSession) -> str:
         active = set(self._get_active_filter_values(session))
@@ -459,6 +464,21 @@ def _h(value: object) -> str:
     if value is None:
         return "—"
     return escape(str(value), quote=False)
+
+
+_MY_ORDERS_ALWAYS_VISIBLE = {
+    OrderStatus.PENDING,
+    OrderStatus.PRICE_READY,
+    OrderStatus.WAITING_PAYMENT,
+}
+_MY_ORDERS_FILTER_STATUSES = (
+    OrderStatus.ISSUED,
+    OrderStatus.PICKUP_POINT,
+    OrderStatus.IN_TRANSIT,
+    OrderStatus.PAID,
+    OrderStatus.PAID_CHECK,
+    OrderStatus.CANCELLED,
+)
 
 
 _FILTER_ALIASES: dict[OrderStatus, set[str]] = {

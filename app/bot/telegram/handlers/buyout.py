@@ -14,8 +14,7 @@ from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
 from app.bot.telegram.keyboards.profile import (
     buyout_add_more_inline_keyboard,
     main_menu_keyboard,
-    my_orders_filters_keyboard,
-    my_orders_pagination_keyboard,
+    my_orders_message_keyboard,
 )
 from app.core.container import AppContainer
 from app.domain.enums import DialogState, OrderStatus, Platform
@@ -72,6 +71,22 @@ def build_buyout_router(container: AppContainer) -> Router:
         response = await container.buyout_flow.start(session)
         await _reply(message, response)
 
+    async def _orders_reply_markup(
+        user_id: int,
+        session,
+        response: BuyoutFlowResponse,
+    ) -> InlineKeyboardMarkup | None:
+        if not response.state_data:
+            return None
+        filters = container.buyout_flow.filter_states(session)
+        return my_orders_message_keyboard(
+            user_id=user_id,
+            current_page=int(response.state_data.get("page", 1)),
+            total_pages=int(response.state_data.get("total_pages", 1)),
+            filters=filters,
+            codec=callback_codec,
+        )
+
     @router.message(F.text.in_({"Мои заказы", "📦 Мои заказы"}))
     async def show_my_orders(message: Message) -> None:
         if not message.from_user:
@@ -80,14 +95,9 @@ def build_buyout_router(container: AppContainer) -> Router:
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
         session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
+        await container.buyout_flow.prepare_preferences(session)
         response = await container.buyout_flow.render_orders(session, page=1)
-        if response.state_data:
-            response.reply_markup = my_orders_pagination_keyboard(
-                user_id=message.from_user.id,
-                current_page=int(response.state_data.get("page", 1)),
-                total_pages=int(response.state_data.get("total_pages", 1)),
-                codec=callback_codec,
-            )
+        response.reply_markup = await _orders_reply_markup(message.from_user.id, session, response)
         await _reply(message, response)
 
     @router.message(F.text.in_({"Фильтры заказов", "🎛 Фильтры заказов"}))
@@ -99,16 +109,9 @@ def build_buyout_router(container: AppContainer) -> Router:
             return
         session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
         await container.buyout_flow.prepare_preferences(session)
-        filters = container.buyout_flow.filter_states(session)
-        await message.answer(
-            container.buyout_flow.filters_hint_text(session),
-            parse_mode="HTML",
-            reply_markup=my_orders_filters_keyboard(
-                user_id=message.from_user.id,
-                filters=filters,
-                codec=callback_codec,
-            ),
-        )
+        response = await container.buyout_flow.render_orders(session, page=1)
+        response.reply_markup = await _orders_reply_markup(message.from_user.id, session, response)
+        await _reply(message, response)
 
     @router.callback_query()
     async def my_orders_pagination(callback: CallbackQuery) -> None:
@@ -643,13 +646,6 @@ def build_buyout_router(container: AppContainer) -> Router:
                     "Платёж будет проверен. После проверки будет заказан товар.",
                     parse_mode="HTML",
                 )
-                await _notify_admin_payment_event(
-                    callback,
-                    container,
-                    notification_settings_store=notification_settings_store,
-                    order_number=order_number,
-                    event_text="Клиент нажал «Оплачено»",
-                )
                 await _post_payment_check_to_group(
                     callback,
                     container=container,
@@ -659,15 +655,6 @@ def build_buyout_router(container: AppContainer) -> Router:
                     callback_codec=callback_codec,
                     order=updated,
                     profile=profile,
-                )
-                await _send_payment_review_to_admins(
-                    callback,
-                    container,
-                    codec=callback_codec,
-                    payment_target_store=payment_target_store,
-                    group_topics_store=group_topics_store,
-                    notification_settings_store=notification_settings_store,
-                    order_number=order_number,
                 )
                 return
             if pay_action == "cancel":
@@ -688,13 +675,6 @@ def build_buyout_router(container: AppContainer) -> Router:
                     f"Заявка <b>{order_number}</b> отменена.",
                     parse_mode="HTML",
                 )
-                await _notify_admin_payment_event(
-                    callback,
-                    container,
-                    notification_settings_store=notification_settings_store,
-                    order_number=order_number,
-                    event_text="Клиент нажал «Отмена оплаты»",
-                )
                 await _notify_payment_group_event(
                     callback,
                     container,
@@ -709,6 +689,7 @@ def build_buyout_router(container: AppContainer) -> Router:
             return
         if action.startswith("orders_filter:"):
             session = await container.profile_flow.get_or_create_session(platform, callback.from_user.id)
+            await container.buyout_flow.prepare_preferences(session)
             raw = action.split(":", maxsplit=1)[1]
             if raw == "reset":
                 await container.buyout_flow.reset_status_filters(session)
@@ -719,17 +700,19 @@ def build_buyout_router(container: AppContainer) -> Router:
                     await callback.answer("Неизвестный фильтр", show_alert=True)
                     return
                 await container.buyout_flow.toggle_status_filter(session, status)
+            page_match = re.search(r"Страница (\d+)/", callback.message.text or callback.message.caption or "")
+            page = int(page_match.group(1)) if page_match else 1
+            response = await container.buyout_flow.render_orders(session, page=page)
             filters = container.buyout_flow.filter_states(session)
-            await callback.answer("Фильтр обновлен")
-            await callback.message.edit_text(
-                container.buyout_flow.filters_hint_text(session),
-                parse_mode="HTML",
-                reply_markup=my_orders_filters_keyboard(
-                    user_id=callback.from_user.id,
-                    filters=filters,
-                    codec=callback_codec,
-                ),
+            reply_markup = my_orders_message_keyboard(
+                user_id=callback.from_user.id,
+                current_page=int(response.state_data.get("page", 1)),
+                total_pages=int(response.state_data.get("total_pages", 1)),
+                filters=filters,
+                codec=callback_codec,
             )
+            await callback.answer("Фильтр обновлен")
+            await callback.message.edit_text(response.text, parse_mode="HTML", reply_markup=reply_markup)
             return
 
         if not action.startswith("my_orders:"):
@@ -740,14 +723,16 @@ def build_buyout_router(container: AppContainer) -> Router:
             await callback.answer()
             return
         session = await container.profile_flow.get_or_create_session(platform, callback.from_user.id)
+        await container.buyout_flow.prepare_preferences(session)
         response = await container.buyout_flow.render_orders(session, page=page)
-        if response.state_data:
-            response.reply_markup = my_orders_pagination_keyboard(
-                user_id=callback.from_user.id,
-                current_page=int(response.state_data.get("page", 1)),
-                total_pages=int(response.state_data.get("total_pages", 1)),
-                codec=callback_codec,
-            )
+        filters = container.buyout_flow.filter_states(session)
+        response.reply_markup = my_orders_message_keyboard(
+            user_id=callback.from_user.id,
+            current_page=int(response.state_data.get("page", 1)),
+            total_pages=int(response.state_data.get("total_pages", 1)),
+            filters=filters,
+            codec=callback_codec,
+        )
         await callback.answer()
         await callback.message.edit_text(response.text, parse_mode="HTML", reply_markup=response.reply_markup)
 
@@ -985,95 +970,6 @@ def build_buyout_router(container: AppContainer) -> Router:
                 )
 
     return router
-
-
-async def _notify_admin_payment_event(
-    callback: CallbackQuery,
-    container: AppContainer,
-    notification_settings_store: NotificationSettingsStore,
-    order_number: str,
-    event_text: str,
-) -> None:
-    if not callback.from_user:
-        return
-    try:
-        silent = await notification_settings_store.should_disable_notification("button")
-        await callback.bot.send_message(
-            chat_id=container.settings.telegram.main_admin_id,
-            text=(
-                "Событие оплаты:\n"
-                f"Заказ: <b>{_h(order_number)}</b>\n"
-                f"Пользователь TG ID: <code>{callback.from_user.id}</code>\n"
-                f"Действие: {_h(event_text)}"
-            ),
-            parse_mode="HTML",
-            disable_notification=silent,
-        )
-    except Exception:
-        return
-
-
-async def _send_payment_review_to_admins(
-    callback: CallbackQuery,
-    container: AppContainer,
-    codec: CallbackCodec,
-    payment_target_store: PaymentReviewTargetStore,
-    group_topics_store: GroupTopicsStore,
-    notification_settings_store: NotificationSettingsStore,
-    order_number: str,
-) -> None:
-    if not callback.from_user:
-        return
-    admin_ids = await container.admin_service.list_admins()
-    text = (
-        "Проверка оплаты:\n"
-        f"Заказ: <b>{_h(order_number)}</b>\n"
-        f"Клиент TG ID: <code>{callback.from_user.id}</code>\n"
-        "Выберите действие:"
-    )
-    for admin_id in admin_ids:
-        if not admin_id:
-            continue
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="✅ Подтвердить",
-                        callback_data=codec.encode(f"payreview:approve:{order_number}", admin_id),
-                    ),
-                    InlineKeyboardButton(
-                        text="❌ Отклонить",
-                        callback_data=codec.encode(f"payreview:reject:{order_number}", admin_id),
-                    ),
-                ]
-            ]
-        )
-        try:
-            silent = await notification_settings_store.should_disable_notification("button")
-            await callback.bot.send_message(
-                chat_id=admin_id,
-                text=text,
-                parse_mode="HTML",
-                reply_markup=keyboard,
-                disable_notification=silent,
-            )
-        except Exception:
-            continue
-    target_chat_id, target_topic_id = await payment_target_store.get_target()
-    if not target_chat_id:
-        target_chat_id, target_topic_id = await group_topics_store.get_tg_topic("payment")
-    if target_chat_id:
-        try:
-            silent = await notification_settings_store.should_disable_notification("button")
-            await callback.bot.send_message(
-                chat_id=target_chat_id,
-                text=text + "\n\nРешение по кнопкам доступно в личных сообщениях админов.",
-                parse_mode="HTML",
-                disable_notification=silent,
-                message_thread_id=target_topic_id,
-            )
-        except Exception:
-            pass
 
 
 async def _notify_payment_group_event(
@@ -1335,7 +1231,7 @@ async def _post_payment_check_to_group(
         quote_body += f"\nЦена: {order.price_rub} ₽"
     if order.manager_comment:
         quote_body += f"\nКомментарий: {_h(order.manager_comment)}"
-    text = f"{_omsk_now_text()}\n\n<blockquote>{quote_body}</blockquote>"
+    text = f"{_omsk_now_text()}\n\n<blockquote expandable>{quote_body}</blockquote>"
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [

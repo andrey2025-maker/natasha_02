@@ -6,7 +6,7 @@ from aiogram.exceptions import TelegramForbiddenError
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
-from app.bot.telegram.keyboards.main_menu import my_orders_filters_keyboard, my_orders_pagination_keyboard
+from app.bot.telegram.keyboards.main_menu import my_orders_message_keyboard
 from app.bot.telegram.keyboards.profile import platforms_keyboard, profile_menu_keyboard
 from app.bot.texts import messages as msg
 from app.core.container import AppContainer
@@ -266,12 +266,15 @@ def build_profile_router(container: AppContainer) -> Router:
             await _apply_response(callback.message, response)
             return
         if action == "profile:buyout_orders":
+            await container.buyout_flow.prepare_preferences(session)
             response = await container.buyout_flow.render_orders(session, page=1)
             if response.state_data:
-                response.reply_markup = my_orders_pagination_keyboard(
+                filters = container.buyout_flow.filter_states(session)
+                response.reply_markup = my_orders_message_keyboard(
                     user_id=callback.from_user.id,
                     current_page=int(response.state_data.get("page", 1)),
                     total_pages=int(response.state_data.get("total_pages", 1)),
+                    filters=filters,
                     codec=callback_codec,
                 )
             await callback.answer()
@@ -279,17 +282,18 @@ def build_profile_router(container: AppContainer) -> Router:
             return
         if action == "profile:buyout_filters":
             await container.buyout_flow.prepare_preferences(session)
-            filters = container.buyout_flow.filter_states(session)
-            await callback.answer()
-            await callback.message.answer(
-                container.buyout_flow.filters_hint_text(session),
-                parse_mode="HTML",
-                reply_markup=my_orders_filters_keyboard(
+            response = await container.buyout_flow.render_orders(session, page=1)
+            if response.state_data:
+                filters = container.buyout_flow.filter_states(session)
+                response.reply_markup = my_orders_message_keyboard(
                     user_id=callback.from_user.id,
+                    current_page=int(response.state_data.get("page", 1)),
+                    total_pages=int(response.state_data.get("total_pages", 1)),
                     filters=filters,
                     codec=callback_codec,
-                ),
-            )
+                )
+            await callback.answer()
+            await _apply_response(callback.message, response)
             return
         response = await container.profile_flow.handle_callback(session, action, callback_codec)
         if action in {"passport_yes", "passport_no"}:

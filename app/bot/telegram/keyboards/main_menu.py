@@ -114,40 +114,79 @@ def my_orders_filters_keyboard(
     filters: dict[OrderStatus, bool],
     codec: CallbackCodec,
 ) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = []
-    for status in OrderStatus:
-        is_enabled = filters.get(status, True)
-        emoji = "🟢" if is_enabled else "🔴"
-        rows.append(
-            [
+    return _my_orders_filters_rows(user_id, filters, codec)
+
+
+def my_orders_message_keyboard(
+    *,
+    user_id: int,
+    current_page: int,
+    total_pages: int,
+    filters: dict[OrderStatus, bool],
+    codec: CallbackCodec,
+) -> InlineKeyboardMarkup:
+    rows = _my_orders_filters_rows(user_id, filters, codec).inline_keyboard
+    if total_pages > 1:
+        nav: list[InlineKeyboardButton] = []
+        if current_page > 1:
+            nav.append(
                 InlineKeyboardButton(
-                    text=f"{emoji} {_status_short_title(status)}",
-                    callback_data=codec.encode(f"orders_filter:{status.value}", user_id),
+                    text="⬅️",
+                    callback_data=codec.encode(f"my_orders:{current_page - 1}", user_id),
                 )
-            ]
-        )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="Сбросить фильтры",
-                callback_data=codec.encode("orders_filter:reset", user_id),
             )
-        ]
-    )
+        if current_page < total_pages:
+            nav.append(
+                InlineKeyboardButton(
+                    text="➡️",
+                    callback_data=codec.encode(f"my_orders:{current_page + 1}", user_id),
+                )
+            )
+        if nav:
+            rows.append(nav)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _status_short_title(status: OrderStatus) -> str:
+def _my_orders_filters_rows(
+    user_id: int,
+    filters: dict[OrderStatus, bool],
+    codec: CallbackCodec,
+) -> InlineKeyboardMarkup:
+    spec_statuses = (
+        OrderStatus.ISSUED,
+        OrderStatus.PICKUP_POINT,
+        OrderStatus.IN_TRANSIT,
+        OrderStatus.PAID,
+        OrderStatus.PAID_CHECK,
+        OrderStatus.CANCELLED,
+    )
+    rows: list[list[InlineKeyboardButton]] = []
+    pair: list[InlineKeyboardButton] = []
+    for status in spec_statuses:
+        is_enabled = filters.get(status, True)
+        emoji = "🟢" if is_enabled else "🔴"
+        pair.append(
+            InlineKeyboardButton(
+                text=f"{emoji} {_my_orders_filter_title(status)}",
+                callback_data=codec.encode(f"orders_filter:{status.value}", user_id),
+            )
+        )
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _my_orders_filter_title(status: OrderStatus) -> str:
     titles = {
-        OrderStatus.PENDING: "Ожидание",
-        OrderStatus.PRICE_READY: "Цена",
-        OrderStatus.WAITING_PAYMENT: "Оплата",
-        OrderStatus.PAID_CHECK: "Проверка",
-        OrderStatus.PAID: "Оплачен",
+        OrderStatus.ISSUED: "Выданные",
+        OrderStatus.PICKUP_POINT: "В пункте выдачи",
         OrderStatus.IN_TRANSIT: "В пути",
-        OrderStatus.PICKUP_POINT: "ПВЗ",
-        OrderStatus.ISSUED: "Выдан",
-        OrderStatus.CANCELLED: "Отменен",
+        OrderStatus.PAID: "Оплачен",
+        OrderStatus.PAID_CHECK: "Проверка",
+        OrderStatus.CANCELLED: "Отмененные",
     }
     return titles.get(status, status.value)
 
