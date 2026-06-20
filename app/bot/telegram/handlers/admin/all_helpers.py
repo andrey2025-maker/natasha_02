@@ -45,16 +45,19 @@ from app.bot.telegram.handlers.admin.media_helpers import (
 )
 from app.bot.telegram.handlers.admin.navigation import _open_user_profile_from_admin
 from app.bot.telegram.handlers.admin.orders import (
+    _default_admin_order_status_filters,
     _field_title,
     _get_admin_orders_state,
     _notify_order_status_change,
     _order_field_value,
     _order_status_name,
     _orders_keyboard,
+    _orders_search_mode_keyboard,
     _parse_order_status,
     _save_admin_orders_state,
     _send_order_edit_panel,
     _send_orders_panel,
+    _toggle_admin_order_status_filter,
     _validate_field_input,
 )
 from app.bot.telegram.handlers.admin.profiles import (
@@ -128,6 +131,7 @@ __all__ = [
     "_order_status_name",
     "_orders_keyboard",
     "_orders_root_keyboard",
+    "_orders_search_mode_keyboard",
     "_parse_blocks_page",
     "_parse_order_status",
     "_payment_group_keyboard",
@@ -150,6 +154,7 @@ __all__ = [
     "_save_admin_utils_state",
     "_send_order_edit_panel",
     "_send_orders_panel",
+    "_toggle_admin_order_status_filter",
     "_send_profiles_page",
     "_sync_vk_attachment_from_tg",
     "UTILS_PANEL_TEXT",

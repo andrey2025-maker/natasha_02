@@ -9,7 +9,7 @@ from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
 from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.keyboards.main_menu import my_orders_message_keyboard
 from app.bot.telegram.keyboards.profile import platforms_keyboard, profile_menu_keyboard
-from app.bot.telegram.my_orders_media import sync_my_orders_media
+from app.bot.telegram.my_orders_media import present_my_orders_panel
 from app.bot.texts import messages as msg
 from app.core.container import AppContainer
 from app.domain.enums import DialogState, Platform
@@ -287,13 +287,14 @@ def build_profile_router(container: AppContainer) -> Router:
                     codec=callback_codec,
                 )
             await callback.answer()
-            await _apply_response(callback.message, response, edit=True)
-            await sync_my_orders_media(
-                callback.message.bot,
-                callback.message.chat.id,
+            await present_my_orders_panel(
+                callback.message,
                 session,
                 container,
+                text=response.text,
                 order_media_groups=response.order_media_groups,
+                reply_markup=response.reply_markup,
+                replace_message=True,
             )
             return
         if action == "profile:buyout_filters":
@@ -309,13 +310,14 @@ def build_profile_router(container: AppContainer) -> Router:
                     codec=callback_codec,
                 )
             await callback.answer()
-            await _apply_response(callback.message, response, edit=True)
-            await sync_my_orders_media(
-                callback.message.bot,
-                callback.message.chat.id,
+            await present_my_orders_panel(
+                callback.message,
                 session,
                 container,
+                text=response.text,
                 order_media_groups=response.order_media_groups,
+                reply_markup=response.reply_markup,
+                replace_message=True,
             )
             return
         response = await container.profile_flow.handle_callback(session, action, callback_codec)

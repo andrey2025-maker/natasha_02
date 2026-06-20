@@ -181,6 +181,10 @@ class BuyoutOrderRepository(ABC):
     async def list_order_media(self, order_id: int) -> list[OrderMediaItem]:
         raise NotImplementedError
 
+    @abstractmethod
+    async def search_orders(self, by: str, query: str, limit: int = 30) -> list[BuyoutOrder]:
+        raise NotImplementedError
+
 
 class OutboundMessageRepository(ABC):
     @abstractmethod

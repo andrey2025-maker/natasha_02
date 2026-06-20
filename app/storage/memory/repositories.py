@@ -256,6 +256,32 @@ class InMemoryBuyoutOrderRepository(BuyoutOrderRepository):
                 return deepcopy(order)
         return None
 
+    async def search_orders(self, by: str, query: str, limit: int = 30) -> list[BuyoutOrder]:
+        mode = by.strip().lower()
+        needle = query.strip().lower()
+        if not needle:
+            return []
+        safe_limit = max(1, min(limit, 100))
+        rows = list(self._orders.values())
+        if mode == "order_number":
+            matched = [order for order in rows if needle in order.order_number.lower()]
+        elif mode == "track":
+            matched = [
+                order
+                for order in rows
+                if order.track_number and needle in order.track_number.lower()
+            ]
+        elif mode == "track":
+            matched = [
+                order
+                for order in rows
+                if order.track_number and needle in order.track_number.lower()
+            ]
+        else:
+            return []
+        matched.sort(key=lambda item: item.created_at, reverse=True)
+        return [deepcopy(row) for row in matched[:safe_limit]]
+
     async def update(self, order: BuyoutOrder) -> BuyoutOrder:
         if order.id not in self._orders:
             raise ValueError("Order not found")

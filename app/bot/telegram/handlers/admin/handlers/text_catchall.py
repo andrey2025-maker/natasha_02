@@ -575,6 +575,29 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
         edit_field = state.get("edit_field")
         bulk_field = state.get("bulk_field")
 
+        if state.get("awaiting_order_search_query"):
+            mode = str(state.get("order_search_mode") or "").strip().lower()
+            query = (message.text or "").strip()
+            if not query:
+                await message.answer("Введите непустой запрос.")
+                return
+            results = await container.order_admin_service.search_orders(by=mode, query=query, limit=90)
+            state["awaiting_order_search_query"] = False
+            state["order_search_mode"] = None
+            state["search_results"] = [order.order_number for order in results]
+            state["page"] = 1
+            await _save_admin_orders_state(container, session, state)
+            if not results:
+                await message.answer("Заказы не найдены.")
+            await _send_orders_panel(
+                message,
+                container,
+                callback_codec,
+                message.from_user.id,
+                state,
+            )
+            return
+
         if bulk_field and state.get("selected"):
             ok, normalized_or_error = _validate_field_input(str(bulk_field), message.text)
             if not ok:

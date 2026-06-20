@@ -6,6 +6,11 @@ from html import escape
 from urllib.parse import urlparse
 
 from app.bot.telegram.fsm_utils import fsm_prompt
+from app.services.order_filter_config import (
+    DEFAULT_ORDER_FILTER_VALUES,
+    ORDER_FILTER_STATUSES,
+    order_filter_title,
+)
 from app.domain.enums import DeliveryFlowType, DialogState, OrderStatus, Platform
 from app.domain.models import BuyoutOrder, OrderMediaItem, OrderStatusHistoryItem, UserProfile, UserSession
 from app.services.user_preferences_store import UserPreferencesStore
@@ -305,19 +310,15 @@ class BuyoutFlowService:
         return values or [item.value for item in _MY_ORDERS_FILTER_STATUSES]
 
     def _get_query_statuses(self, session: UserSession) -> list[str]:
-        active = set(self._get_active_filter_values(session))
-        statuses = {item.value for item in _MY_ORDERS_ALWAYS_VISIBLE}
-        for status in _MY_ORDERS_FILTER_STATUSES:
-            if status.value in active:
-                statuses.add(status.value)
-        return sorted(statuses)
+        return sorted(set(self._get_active_filter_values(session)))
 
     def _filters_summary_text(self, session: UserSession) -> str:
         active = set(self._get_active_filter_values(session))
         parts: list[str] = []
-        for status in OrderStatus:
-            marker = "🟢" if status.value in active else "🔴"
-            parts.append(f"{marker} {_status_title(status)}")
+        for status in ORDER_FILTER_STATUSES:
+            marker = order_filter_title(status)
+            emoji = "🟢" if status.value in active else "🔴"
+            parts.append(f"{emoji} {marker}")
         return "Фильтры: " + ", ".join(parts)
 
     @staticmethod
@@ -345,7 +346,7 @@ class BuyoutFlowService:
             if stored:
                 prefs["order_filters"] = stored
             else:
-                prefs["order_filters"] = [item.value for item in OrderStatus]
+                prefs["order_filters"] = list(DEFAULT_ORDER_FILTER_VALUES)
         merged = self._merge_preferences(session.state_data, prefs)
         merged["_prefs_loaded"] = True
         session.state_data = merged
@@ -519,19 +520,7 @@ def _h(value: object) -> str:
     return escape(str(value), quote=False)
 
 
-_MY_ORDERS_ALWAYS_VISIBLE = {
-    OrderStatus.PRICE_READY,
-    OrderStatus.WAITING_PAYMENT,
-}
-_MY_ORDERS_FILTER_STATUSES = (
-    OrderStatus.PENDING,
-    OrderStatus.ISSUED,
-    OrderStatus.PICKUP_POINT,
-    OrderStatus.IN_TRANSIT,
-    OrderStatus.PAID,
-    OrderStatus.PAID_CHECK,
-    OrderStatus.CANCELLED,
-)
+_MY_ORDERS_FILTER_STATUSES = ORDER_FILTER_STATUSES
 
 
 _FILTER_ALIASES: dict[OrderStatus, set[str]] = {

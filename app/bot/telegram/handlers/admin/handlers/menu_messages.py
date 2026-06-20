@@ -134,6 +134,9 @@ def register_menu_messages(router: Router, ctx: AdminContext) -> None:
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
         state = _get_admin_orders_state(session)
         state["page"] = 1
+        state["search_results"] = None
+        state["awaiting_order_search_query"] = False
+        state["order_search_mode"] = None
         await _save_admin_orders_state(container, session, state)
         await _send_orders_panel(message, container, callback_codec, message.from_user.id, state)
 

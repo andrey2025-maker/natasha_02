@@ -30,8 +30,8 @@ async def _send_profiles_page(
             await message.answer(text)
         return
     lines = ["Профили:"]
-    for idx, p in enumerate(items, start=1 + (safe_page - 1) * 9):
-        lines.append(_profile_list_item_text(idx, p))
+    for p in items:
+        lines.append(_profile_list_item_text(p))
     text = "\n\n".join(lines)
     keyboard = _profiles_pagination(user_id, safe_page, codec, items)
     if edit:
@@ -328,7 +328,7 @@ def _profile_state_emoji(profile: UserProfile) -> str:
     return "🟢"
 
 
-def _profile_list_item_text(index: int, profile: UserProfile) -> str:
+def _profile_list_item_text(profile: UserProfile) -> str:
     status = _profile_state_emoji(profile)
     name_value = _h(profile.name or "Нет")
     if profile.telegram_user_id:
@@ -349,7 +349,7 @@ def _profile_list_item_text(index: int, profile: UserProfile) -> str:
         f"🕒 Последняя активность: {_h(profile.last_activity_at.strftime('%Y-%m-%d %H:%M'))}\n"
         f"📅 Дата регистрации: {_h(profile.created_at.strftime('%Y-%m-%d %H:%M'))}"
     )
-    return f"{index}.\n<blockquote expandable>{details}</blockquote>"
+    return f"<blockquote expandable>{details}</blockquote>"
 
 
 def _block_button(profile: UserProfile, user_id: int, codec: CallbackCodec):

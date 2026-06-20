@@ -6,12 +6,90 @@ from app.bot.telegram.callbacks import CallbackCodec
 from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.handlers.admin.html import _h
 from app.bot.telegram.handlers.admin.media_helpers import _mark_blocked_bot_if_needed
-from app.core.container import AppContainer
-from app.domain.enums import OrderStatus, Platform
-from app.domain.models import OutboundMessage
-from app.services.admin_tools_service import PaymentTextStore, send_stored_media_to_telegram
+from app.services.order_filter_config import DEFAULT_ORDER_FILTER_VALUES, ORDER_FILTER_STATUSES, order_filter_button_text
 
-from app.bot.telegram.handlers.admin.keyboards import _orders_root_keyboard
+_ADMIN_ORDER_FILTER_STATUSES = ORDER_FILTER_STATUSES
+_DEFAULT_ADMIN_ORDER_STATUS_FILTERS = list(DEFAULT_ORDER_FILTER_VALUES)
+
+
+def _default_admin_order_status_filters() -> list[str]:
+    return list(_DEFAULT_ADMIN_ORDER_STATUS_FILTERS)
+
+
+def _admin_orders_filter_states(state: dict) -> dict[OrderStatus, bool]:
+    raw = state.get("status_filters")
+    active = set(raw if isinstance(raw, list) else _default_admin_order_status_filters())
+    return {status: status.value in active for status in _ADMIN_ORDER_FILTER_STATUSES}
+
+
+def _admin_orders_query_statuses(state: dict) -> list[OrderStatus]:
+    raw = state.get("status_filters")
+    active = set(raw if isinstance(raw, list) else _default_admin_order_status_filters())
+    result: list[OrderStatus] = []
+    for status in _ADMIN_ORDER_FILTER_STATUSES:
+        if status.value in active:
+            result.append(status)
+    return result
+
+
+def _toggle_admin_order_status_filter(state: dict, status: OrderStatus) -> None:
+    if status not in _ADMIN_ORDER_FILTER_STATUSES:
+        return
+    raw = state.get("status_filters")
+    active = set(raw if isinstance(raw, list) else _default_admin_order_status_filters())
+    if status.value in active:
+        active.discard(status.value)
+    else:
+        active.add(status.value)
+    if not active:
+        active = set(_default_admin_order_status_filters())
+    state["status_filters"] = sorted(active)
+    state["search_results"] = None
+    state["page"] = 1
+
+
+async def _load_admin_orders_page(
+    container: AppContainer,
+    state: dict,
+    *,
+    page_size: int = 9,
+) -> tuple[list, int, int]:
+    page = int(state.get("page", 1))
+    search_results = state.get("search_results")
+    if isinstance(search_results, list) and search_results:
+        order_numbers = [str(item) for item in search_results]
+        total = len(order_numbers)
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        safe_page = min(max(1, page), total_pages)
+        if safe_page != page:
+            page = safe_page
+            state["page"] = page
+        offset = (safe_page - 1) * page_size
+        chunk = order_numbers[offset : offset + page_size]
+        orders = []
+        for order_number in chunk:
+            order = await container.order_admin_service.get_order(order_number)
+            if order:
+                orders.append(order)
+        return orders, total, total_pages
+
+    statuses = _admin_orders_query_statuses(state)
+    orders, total = await container.order_admin_service.list_recent_orders(
+        page=page,
+        page_size=page_size,
+        statuses=statuses,
+    )
+    if not orders and page > 1:
+        page -= 1
+        state["page"] = page
+        orders, total = await container.order_admin_service.list_recent_orders(
+            page=page,
+            page_size=page_size,
+            statuses=statuses,
+        )
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    return orders, total, total_pages
+
 
 async def _send_orders_panel(
     message: Message,
@@ -21,18 +99,16 @@ async def _send_orders_panel(
     state: dict,
     edit: bool = False,
 ) -> None:
+    orders, total, total_pages = await _load_admin_orders_page(container, state)
     page = int(state.get("page", 1))
     selected = set(state.get("selected", []))
-    orders, total = await container.order_admin_service.list_recent_orders(page=page, page_size=9)
-    if not orders and page > 1:
-        page = page - 1
-        state["page"] = page
-        orders, total = await container.order_admin_service.list_recent_orders(page=page, page_size=9)
-    total_pages = max(1, (total + 8) // 9)
+    search_active = isinstance(state.get("search_results"), list) and bool(state.get("search_results"))
 
     lines = ["<b>Заказы (массовое обновление)</b>"]
     lines.append(f"Страница {page}/{total_pages}")
     lines.append(f"Выбрано: {len(selected)}")
+    if search_active:
+        lines.append(f"Поиск: найдено {total}")
     lines.append("")
     if not orders:
         lines.append("Заказов пока нет.")
@@ -44,12 +120,96 @@ async def _send_orders_panel(
                 f"({order.updated_at.strftime('%d.%m.%y')})"
             )
 
-    keyboard = _orders_keyboard(user_id, codec, page, total_pages, orders, selected)
+    keyboard = _orders_keyboard(
+        user_id,
+        codec,
+        page,
+        total_pages,
+        orders,
+        selected,
+        filter_states=_admin_orders_filter_states(state),
+        search_active=search_active,
+    )
     text = "\n".join(lines)
     if edit:
         await edit_panel_message(message, text=text, parse_mode="HTML", reply_markup=keyboard)
     else:
         await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+def _append_order_toggle_rows(
+    rows: list[list[InlineKeyboardButton]],
+    orders,
+    selected: set[str],
+    user_id: int,
+    codec: CallbackCodec,
+) -> None:
+    order_buttons: list[InlineKeyboardButton] = []
+    for order in orders:
+        mark = "✅" if order.order_number in selected else "⬜️"
+        order_buttons.append(
+            InlineKeyboardButton(
+                text=f"{mark} {order.order_number}",
+                callback_data=codec.encode(f"admin:orders:toggle:{order.order_number}", user_id),
+            )
+        )
+        if len(order_buttons) == 3:
+            rows.append(order_buttons)
+            order_buttons = []
+    if order_buttons:
+        rows.append(order_buttons)
+
+
+def _admin_orders_filter_rows(
+    user_id: int,
+    codec: CallbackCodec,
+    filters: dict[OrderStatus, bool],
+) -> list[list[InlineKeyboardButton]]:
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for status in _ADMIN_ORDER_FILTER_STATUSES:
+        is_enabled = filters.get(status, True)
+        row.append(
+            InlineKeyboardButton(
+                text=order_filter_button_text(status, enabled=is_enabled),
+                callback_data=codec.encode(f"admin:orders:filter:{status.value}", user_id),
+            )
+        )
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return rows
+
+
+def _orders_search_mode_keyboard(user_id: int, codec: CallbackCodec) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Номер",
+                    callback_data=codec.encode("admin:orders:search:order_number", user_id),
+                ),
+                InlineKeyboardButton(
+                    text="Код",
+                    callback_data=codec.encode("admin:orders:search:code", user_id),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Трек",
+                    callback_data=codec.encode("admin:orders:search:track", user_id),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⬅️ К списку",
+                    callback_data=codec.encode("admin:orders:back_list", user_id),
+                ),
+            ],
+        ]
+    )
 
 
 def _orders_keyboard(
@@ -59,68 +219,23 @@ def _orders_keyboard(
     total_pages: int,
     orders,
     selected: set[str],
+    *,
+    filter_states: dict[OrderStatus, bool],
+    search_active: bool = False,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    for order in orders:
-        mark = "✅" if order.order_number in selected else "⬜️"
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"{mark} {order.order_number}",
-                    callback_data=codec.encode(f"admin:orders:toggle:{order.order_number}", user_id),
-                )
-            ]
-        )
+    _append_order_toggle_rows(rows, orders, selected, user_id, codec)
+    rows.extend(_admin_orders_filter_rows(user_id, codec, filter_states))
     rows.append(
         [
             InlineKeyboardButton(
-                text="Ожидание",
-                callback_data=codec.encode("admin:orders:set_status:pending", user_id),
-            ),
-            InlineKeyboardButton(
-                text="Оплачен",
-                callback_data=codec.encode("admin:orders:set_status:paid", user_id),
-            ),
-        ]
-    )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="В пути",
-                callback_data=codec.encode("admin:orders:set_status:in_transit", user_id),
-            ),
-            InlineKeyboardButton(
-                text="ПВЗ",
-                callback_data=codec.encode("admin:orders:set_status:pickup_point", user_id),
-            ),
-        ]
-    )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="Выдан",
-                callback_data=codec.encode("admin:orders:set_status:issued", user_id),
-            ),
-            InlineKeyboardButton(
-                text="Отменен",
-                callback_data=codec.encode("admin:orders:set_status:cancelled", user_id),
-            ),
-        ]
-    )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="Очистить выбор",
+                text="Очистить",
                 callback_data=codec.encode("admin:orders:clear", user_id),
-            )
-        ]
-    )
-    rows.append(
-        [
+            ),
             InlineKeyboardButton(
-                text="Редактировать выбранный",
+                text="Ред.",
                 callback_data=codec.encode("admin:orders:edit", user_id),
-            )
+            ),
         ]
     )
     rows.append(
@@ -150,15 +265,61 @@ def _orders_keyboard(
     rows.append(
         [
             InlineKeyboardButton(
-                text="⬅️",
-                callback_data=codec.encode(f"admin:orders:page:{max(1, page - 1)}", user_id),
+                text="→ Ожидание",
+                callback_data=codec.encode("admin:orders:set_status:pending", user_id),
             ),
             InlineKeyboardButton(
-                text="➡️",
-                callback_data=codec.encode(f"admin:orders:page:{min(total_pages, page + 1)}", user_id),
+                text="→ Оплачен",
+                callback_data=codec.encode("admin:orders:set_status:paid", user_id),
             ),
         ]
     )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="→ В пути",
+                callback_data=codec.encode("admin:orders:set_status:in_transit", user_id),
+            ),
+            InlineKeyboardButton(
+                text="→ ПВЗ",
+                callback_data=codec.encode("admin:orders:set_status:pickup_point", user_id),
+            ),
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="→ Выдан",
+                callback_data=codec.encode("admin:orders:set_status:issued", user_id),
+            ),
+            InlineKeyboardButton(
+                text="→ Отменен",
+                callback_data=codec.encode("admin:orders:set_status:cancelled", user_id),
+            ),
+        ]
+    )
+    nav: list[InlineKeyboardButton] = []
+    if page > 1:
+        nav.append(
+            InlineKeyboardButton(
+                text="⬅️",
+                callback_data=codec.encode(f"admin:orders:page:{max(1, page - 1)}", user_id),
+            )
+        )
+    nav.append(
+        InlineKeyboardButton(
+            text="🔍",
+            callback_data=codec.encode("admin:orders:search_menu", user_id),
+        )
+    )
+    if page < total_pages:
+        nav.append(
+            InlineKeyboardButton(
+                text="➡️",
+                callback_data=codec.encode(f"admin:orders:page:{min(total_pages, page + 1)}", user_id),
+            )
+        )
+    rows.append(nav)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -169,6 +330,14 @@ def _get_admin_orders_state(session) -> dict:
         selected = block.get("selected", [])
         edit_order = block.get("edit_order")
         edit_field = block.get("edit_field")
+        raw_filters = block.get("status_filters")
+        status_filters = (
+            [str(item) for item in raw_filters]
+            if isinstance(raw_filters, list)
+            else _default_admin_order_status_filters()
+        )
+        raw_search = block.get("search_results")
+        search_results = [str(item) for item in raw_search] if isinstance(raw_search, list) else None
         if isinstance(selected, list):
             return {
                 "page": page,
@@ -178,6 +347,10 @@ def _get_admin_orders_state(session) -> dict:
                 "bulk_field": str(block.get("bulk_field")) if block.get("bulk_field") else None,
                 "pending_field": str(block.get("pending_field")) if block.get("pending_field") else None,
                 "pending_value": str(block.get("pending_value")) if block.get("pending_value") else None,
+                "status_filters": status_filters,
+                "awaiting_order_search_query": bool(block.get("awaiting_order_search_query")),
+                "order_search_mode": str(block.get("order_search_mode")) if block.get("order_search_mode") else None,
+                "search_results": search_results,
             }
     return {
         "page": 1,
@@ -187,6 +360,10 @@ def _get_admin_orders_state(session) -> dict:
         "bulk_field": None,
         "pending_field": None,
         "pending_value": None,
+        "status_filters": _default_admin_order_status_filters(),
+        "awaiting_order_search_query": False,
+        "order_search_mode": None,
+        "search_results": None,
     }
 
 
@@ -200,6 +377,10 @@ async def _save_admin_orders_state(container: AppContainer, session, state: dict
         "bulk_field": state.get("bulk_field"),
         "pending_field": state.get("pending_field"),
         "pending_value": state.get("pending_value"),
+        "status_filters": list(state.get("status_filters") or _default_admin_order_status_filters()),
+        "awaiting_order_search_query": bool(state.get("awaiting_order_search_query")),
+        "order_search_mode": state.get("order_search_mode"),
+        "search_results": state.get("search_results"),
     }
     session.state_data = payload
     await container.session_repo.save(session)

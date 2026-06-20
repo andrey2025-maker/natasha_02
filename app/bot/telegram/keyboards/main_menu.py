@@ -7,6 +7,11 @@ from app.domain.enums import OrderStatus
 from app.domain.models import UserProfile
 
 from app.bot.telegram.callbacks import CallbackCodec
+from app.services.order_filter_config import (
+    ORDER_FILTER_STATUSES,
+    order_filter_button_text,
+    order_filter_title,
+)
 
 
 def main_menu_keyboard(include_admin: bool = False) -> ReplyKeyboardMarkup:
@@ -152,45 +157,26 @@ def _my_orders_filters_rows(
     filters: dict[OrderStatus, bool],
     codec: CallbackCodec,
 ) -> InlineKeyboardMarkup:
-    spec_statuses = (
-        OrderStatus.PENDING,
-        OrderStatus.ISSUED,
-        OrderStatus.PICKUP_POINT,
-        OrderStatus.IN_TRANSIT,
-        OrderStatus.PAID,
-        OrderStatus.PAID_CHECK,
-        OrderStatus.CANCELLED,
-    )
     rows: list[list[InlineKeyboardButton]] = []
-    pair: list[InlineKeyboardButton] = []
-    for status in spec_statuses:
+    row: list[InlineKeyboardButton] = []
+    for status in ORDER_FILTER_STATUSES:
         is_enabled = filters.get(status, True)
-        emoji = "🟢" if is_enabled else "🔴"
-        pair.append(
+        row.append(
             InlineKeyboardButton(
-                text=f"{emoji} {_my_orders_filter_title(status)}",
+                text=order_filter_button_text(status, enabled=is_enabled),
                 callback_data=codec.encode(f"orders_filter:{status.value}", user_id),
             )
         )
-        if len(pair) == 2:
-            rows.append(pair)
-            pair = []
-    if pair:
-        rows.append(pair)
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _my_orders_filter_title(status: OrderStatus) -> str:
-    titles = {
-        OrderStatus.PENDING: "Ожидание",
-        OrderStatus.ISSUED: "Выданные",
-        OrderStatus.PICKUP_POINT: "В пункте выдачи",
-        OrderStatus.IN_TRANSIT: "В пути",
-        OrderStatus.PAID: "Оплачен",
-        OrderStatus.PAID_CHECK: "Проверка",
-        OrderStatus.CANCELLED: "Отмененные",
-    }
-    return titles.get(status, status.value)
+    return order_filter_title(status)
 
 
 def admin_menu_keyboard(is_main_admin: bool) -> ReplyKeyboardMarkup:

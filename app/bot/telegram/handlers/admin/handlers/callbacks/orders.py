@@ -92,6 +92,40 @@ def register_orders_callbacks(router: Router, ctx: AdminContext) -> None:
                 page = max(1, int(payload.split(":")[1]))
                 state["page"] = page
                 await _save_admin_orders_state(container, session, state)
+            elif payload.startswith("filter:"):
+                status_raw = payload.split(":", maxsplit=1)[1]
+                try:
+                    status = OrderStatus(status_raw)
+                except ValueError:
+                    await callback.answer("Неизвестный фильтр", show_alert=True)
+                    return
+                _toggle_admin_order_status_filter(state, status)
+                await _save_admin_orders_state(container, session, state)
+                await callback.answer("Фильтр обновлен")
+            elif payload == "search_menu":
+                await callback.answer()
+                await edit_panel_message(
+                    callback.message,
+                    text="Выберите, по чему искать заказ:",
+                    reply_markup=_orders_search_mode_keyboard(callback.from_user.id, callback_codec),
+                )
+                return
+            elif payload.startswith("search:"):
+                mode = payload.split(":", maxsplit=1)[1]
+                if mode not in {"order_number", "code", "track"}:
+                    await callback.answer("Неизвестный режим поиска", show_alert=True)
+                    return
+                state["awaiting_order_search_query"] = True
+                state["order_search_mode"] = mode
+                await _save_admin_orders_state(container, session, state)
+                prompts = {
+                    "order_number": "Введите номер заказа (можно часть номера):",
+                    "code": "Введите код клиента (например, 001):",
+                    "track": "Введите трек-номер (можно часть):",
+                }
+                await callback.answer()
+                await edit_panel_message(callback.message, text=prompts[mode])
+                return
             elif payload.startswith("toggle:"):
                 order_number = payload.split(":", maxsplit=1)[1]
                 selected = set(state.get("selected", []))
@@ -240,6 +274,9 @@ def register_orders_callbacks(router: Router, ctx: AdminContext) -> None:
                 state["bulk_field"] = None
                 state["pending_field"] = None
                 state["pending_value"] = None
+                state["search_results"] = None
+                state["awaiting_order_search_query"] = False
+                state["order_search_mode"] = None
                 await _save_admin_orders_state(container, session, state)
                 await callback.answer()
             elif payload == "clear":

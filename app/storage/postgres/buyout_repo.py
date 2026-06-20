@@ -297,3 +297,49 @@ class PostgresBuyoutOrderRepository(BuyoutOrderRepository):
                 order_id,
             )
         return [_row_to_media(row) for row in rows]
+
+    async def search_orders(self, by: str, query: str, limit: int = 30) -> list[BuyoutOrder]:
+        mode = by.strip().lower()
+        needle = query.strip()
+        if not needle:
+            return []
+        safe_limit = max(1, min(limit, 100))
+        pattern = f"%{needle}%"
+        async with self._pool.acquire() as conn:
+            if mode == "order_number":
+                rows = await conn.fetch(
+                    """
+                    SELECT * FROM buyout_orders
+                    WHERE order_number ILIKE $1
+                    ORDER BY created_at DESC
+                    LIMIT $2
+                    """,
+                    pattern,
+                    safe_limit,
+                )
+            elif mode == "code":
+                rows = await conn.fetch(
+                    """
+                    SELECT o.* FROM buyout_orders o
+                    JOIN user_profiles p ON p.id = o.user_profile_id
+                    WHERE p.code ILIKE $1
+                    ORDER BY o.created_at DESC
+                    LIMIT $2
+                    """,
+                    pattern,
+                    safe_limit,
+                )
+            elif mode == "track":
+                rows = await conn.fetch(
+                    """
+                    SELECT * FROM buyout_orders
+                    WHERE track_number ILIKE $1
+                    ORDER BY created_at DESC
+                    LIMIT $2
+                    """,
+                    pattern,
+                    safe_limit,
+                )
+            else:
+                return []
+        return [_row_to_order(row) for row in rows]

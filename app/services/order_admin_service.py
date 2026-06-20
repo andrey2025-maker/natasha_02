@@ -5,12 +5,13 @@ from datetime import datetime
 
 from app.domain.enums import OrderStatus, Platform
 from app.domain.models import BuyoutOrder, OrderStatusHistoryItem
-from app.storage.interfaces import BuyoutOrderRepository
+from app.storage.interfaces import BuyoutOrderRepository, UserProfileRepository
 
 
 @dataclass(slots=True)
 class OrderAdminService:
     repository: BuyoutOrderRepository
+    profile_repo: UserProfileRepository | None = None
 
     async def set_status(
         self,
@@ -61,6 +62,18 @@ class OrderAdminService:
         offset = (safe_page - 1) * page_size
         items = await self.repository.list_all_recent(limit=page_size, offset=offset, statuses=status_values)
         return items, total
+
+    async def search_orders(self, by: str, query: str, limit: int = 30) -> list[BuyoutOrder]:
+        mode = by.strip().lower()
+        needle = query.strip()
+        if not needle:
+            return []
+        if mode == "code" and self.profile_repo is not None:
+            code = needle.zfill(3) if needle.isdigit() else needle
+            profile = await self.profile_repo.get_by_code(code)
+            if profile:
+                return await self.repository.list_for_user(profile.id, limit=limit, offset=0)
+        return await self.repository.search_orders(mode, query, limit=limit)
 
     async def update_order_field(self, order_number: str, field_name: str, raw_value: str) -> BuyoutOrder | None:
         order = await self.repository.get_by_order_number(order_number.strip())

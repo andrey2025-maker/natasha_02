@@ -70,7 +70,7 @@ def build_container(
         profile_repo=profile_repo,
     )
     faq_service = FaqService(repository=faq_repo)
-    order_admin_service = OrderAdminService(repository=buyout_repo)
+    order_admin_service = OrderAdminService(repository=buyout_repo, profile_repo=profile_repo)
     stats_service = StatsService(profile_repo=profile_repo, buyout_repo=buyout_repo)
     profile_flow = ProfileFlowService(profile_repo, session_repo, profile_code_service, sync_service)
     buyout_flow = BuyoutFlowService(

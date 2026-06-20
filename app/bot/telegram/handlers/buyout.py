@@ -17,7 +17,7 @@ from app.bot.telegram.keyboards.profile import (
     main_menu_keyboard,
     my_orders_message_keyboard,
 )
-from app.bot.telegram.my_orders_media import sync_my_orders_media
+from app.bot.telegram.my_orders_media import present_my_orders_panel
 from app.core.container import AppContainer
 from app.domain.enums import DialogState, OrderStatus, Platform
 from app.domain.models import OutboundMessage
@@ -89,6 +89,26 @@ def build_buyout_router(container: AppContainer) -> Router:
             codec=callback_codec,
         )
 
+    async def _present_my_orders(
+        message: Message,
+        session,
+        response: BuyoutFlowResponse,
+        *,
+        replace_message: bool = False,
+    ) -> None:
+        reply_markup = response.reply_markup
+        if reply_markup is None and response.state_data:
+            reply_markup = await _orders_reply_markup(message.from_user.id, session, response)
+        await present_my_orders_panel(
+            message,
+            session,
+            container,
+            text=response.text,
+            order_media_groups=response.order_media_groups,
+            reply_markup=reply_markup,
+            replace_message=replace_message,
+        )
+
     @router.message(F.text.in_({"Мои заказы", "📦 Мои заказы"}))
     async def show_my_orders(message: Message) -> None:
         if not message.from_user:
@@ -100,14 +120,7 @@ def build_buyout_router(container: AppContainer) -> Router:
         await container.buyout_flow.prepare_preferences(session)
         response = await container.buyout_flow.render_orders(session, page=1)
         response.reply_markup = await _orders_reply_markup(message.from_user.id, session, response)
-        await _reply(message, response)
-        await sync_my_orders_media(
-            message.bot,
-            message.chat.id,
-            session,
-            container,
-            order_media_groups=response.order_media_groups,
-        )
+        await _present_my_orders(message, session, response)
 
     @router.message(F.text.in_({"Фильтры заказов", "🎛 Фильтры заказов"}))
     async def show_filters(message: Message) -> None:
@@ -120,14 +133,7 @@ def build_buyout_router(container: AppContainer) -> Router:
         await container.buyout_flow.prepare_preferences(session)
         response = await container.buyout_flow.render_orders(session, page=1)
         response.reply_markup = await _orders_reply_markup(message.from_user.id, session, response)
-        await _reply(message, response)
-        await sync_my_orders_media(
-            message.bot,
-            message.chat.id,
-            session,
-            container,
-            order_media_groups=response.order_media_groups,
-        )
+        await _present_my_orders(message, session, response)
 
     @router.callback_query()
     async def my_orders_pagination(callback: CallbackQuery) -> None:
@@ -734,13 +740,12 @@ def build_buyout_router(container: AppContainer) -> Router:
                 codec=callback_codec,
             )
             await callback.answer("Фильтр обновлен")
-            await callback.message.edit_text(response.text, parse_mode="HTML", reply_markup=reply_markup)
-            await sync_my_orders_media(
-                callback.message.bot,
-                callback.message.chat.id,
+            response.reply_markup = reply_markup
+            await _present_my_orders(
+                callback.message,
                 session,
-                container,
-                order_media_groups=response.order_media_groups,
+                response,
+                replace_message=True,
             )
             return
 
@@ -763,13 +768,11 @@ def build_buyout_router(container: AppContainer) -> Router:
             codec=callback_codec,
         )
         await callback.answer()
-        await callback.message.edit_text(response.text, parse_mode="HTML", reply_markup=response.reply_markup)
-        await sync_my_orders_media(
-            callback.message.bot,
-            callback.message.chat.id,
+        await _present_my_orders(
+            callback.message,
             session,
-            container,
-            order_media_groups=response.order_media_groups,
+            response,
+            replace_message=True,
         )
 
     @router.message(F.photo | F.video | F.animation | F.document)
