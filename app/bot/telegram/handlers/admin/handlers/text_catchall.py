@@ -28,8 +28,6 @@ from app.bot.telegram.handlers.admin.context import AdminContext
 from app.bot.telegram.handlers.content_utils_admin import (
     SCREEN_EDIT_MEDIA as CONTENT_UTILS_EDIT_MEDIA,
     SCREEN_EDIT_MENU as CONTENT_UTILS_EDIT_MENU,
-    SCREEN_EDIT_TEXT as CONTENT_UTILS_EDIT_TEXT,
-    content_utils_edit_kind,
     handle_content_utils_callback,
     refresh_content_utils_panel,
     reset_content_utils_state,
@@ -129,6 +127,18 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
         edit_field = orders_state.get("edit_field")
         bulk_field = orders_state.get("bulk_field")
 
+        if await try_handle_content_utils_text(
+            message,
+            codec=callback_codec,
+            utils_state=utils_state,
+            prohibited_store=prohibited_store,
+            contacts_store=contacts_store,
+            group_topics_store=group_topics_store,
+            container=container,
+        ):
+            await _save_admin_utils_state(container, session, utils_state)
+            return
+
         if utils_state.get("awaiting_payment_text"):
             new_text = message.text.strip()
             if not new_text:
@@ -175,24 +185,6 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
             if not handled:
                 await message.answer(
                     "Сейчас ожидается медиа для раздела доставки. Используйте «Удалить медиа &lt;номер&gt;» или «Готово медиа»."
-                )
-            return
-
-        if await try_handle_content_utils_text(
-            message,
-            codec=callback_codec,
-            utils_state=utils_state,
-            prohibited_store=prohibited_store,
-            contacts_store=contacts_store,
-        ):
-            await _save_admin_utils_state(container, session, utils_state)
-            return
-
-        if utils_state.get("awaiting_content_utils_media"):
-            if content_utils_edit_kind(utils_state) is None:
-                await message.answer(
-                    "Сейчас ожидается медиа. Отправьте фото, видео или GIF, "
-                    "либо нажмите «Готово» в сообщении выше."
                 )
             return
 

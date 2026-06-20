@@ -368,6 +368,14 @@ class ProhibitedGoodsStore:
     async def clear_media(self) -> None:
         await self._db.delete("prohibited_goods_media")
 
+    async def replace_media(self, items: list[dict]) -> None:
+        normalized = [_normalize_media_item(item) for item in items]
+        normalized = [item for item in normalized if item]
+        if normalized:
+            await self._db.set("prohibited_goods_media", {"items": normalized})
+        else:
+            await self.clear_media()
+
     async def remove_media_at(self, index: int) -> bool:
         items = await self.get_media_items()
         if index < 1 or index > len(items):
@@ -435,6 +443,14 @@ class StaticContentStore:
 
     async def clear_media(self) -> None:
         await self._db.delete(f"{self.key}.media")
+
+    async def replace_media(self, items: list[dict]) -> None:
+        normalized = [_normalize_media_item(item) for item in items]
+        normalized = [item for item in normalized if item]
+        if normalized:
+            await self._db.set(f"{self.key}.media", {"items": normalized})
+        else:
+            await self.clear_media()
 
     async def remove_media_at(self, index: int) -> bool:
         items = await self.get_media_items()

@@ -26,15 +26,7 @@ from app.bot.telegram.fsm_utils import (
 from app.bot.telegram.handlers.admin.all_helpers import *
 from app.bot.telegram.handlers.admin.context import AdminContext
 from app.bot.telegram.handlers.content_utils_admin import (
-    SCREEN_EDIT_MEDIA as CONTENT_UTILS_EDIT_MEDIA,
-    SCREEN_EDIT_MENU as CONTENT_UTILS_EDIT_MENU,
-    SCREEN_EDIT_TEXT as CONTENT_UTILS_EDIT_TEXT,
-    content_utils_edit_kind,
-    enter_content_utils_edit_mode,
-    handle_content_utils_callback,
-    refresh_content_utils_panel,
-    reset_content_utils_state,
-    try_handle_content_utils_text,
+    try_handle_content_utils_submission,
 )
 from app.bot.telegram.handlers.faq_admin import (
     SCREEN_CONTENT,
@@ -85,6 +77,17 @@ def register_media_messages(router: Router, ctx: AdminContext) -> None:
             return
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
         utils_state = _get_admin_utils_state(session)
+        if await try_handle_content_utils_submission(
+            message,
+            codec=callback_codec,
+            utils_state=utils_state,
+            prohibited_store=prohibited_store,
+            contacts_store=contacts_store,
+            group_topics_store=group_topics_store,
+            container=container,
+        ):
+            await _save_admin_utils_state(container, session, utils_state)
+            return
         if utils_state.get("awaiting_payment_media"):
             media_type = ""
             file_id = ""
@@ -164,66 +167,6 @@ def register_media_messages(router: Router, ctx: AdminContext) -> None:
                 await _save_admin_utils_state(container, session, utils_state)
                 suffix = " и синхронизировано в VK." if vk_attachment else ". VK синхронизация не выполнена."
                 await message.answer("Медиа доставки добавлено" + suffix + " Отправьте ещё или «Готово медиа».")
-            return
-        content_utils_kind = content_utils_edit_kind(utils_state)
-        if content_utils_kind in {"prohibited", "contacts"}:
-            media_type = ""
-            file_id = ""
-            if message.photo:
-                media_type = "photo"
-                file_id = message.photo[-1].file_id
-            elif message.video:
-                media_type = "video"
-                file_id = message.video.file_id
-            elif message.animation:
-                media_type = "animation"
-                file_id = message.animation.file_id
-            elif message.document:
-                media_type = "document"
-                file_id = message.document.file_id
-            if not media_type or not file_id:
-                await message.answer("Не удалось распознать медиа. Отправьте фото, видео, GIF или документ.")
-                return
-            label = f"{content_utils_kind}_media"
-            store = prohibited_store if content_utils_kind == "prohibited" else contacts_store
-            archive_chat_id, archive_topic_id, archive_message_id = await _archive_media_in_group_topic(
-                message=message,
-                group_topics_store=group_topics_store,
-                label=label,
-            )
-            vk_attachment = await _sync_vk_attachment_from_tg(
-                message=message,
-                container=container,
-                media_type=media_type,
-                file_id=file_id,
-            )
-            await store.save_media(
-                media_type=media_type,
-                file_id=file_id,
-                caption=message.caption or "",
-                vk_attachment=vk_attachment,
-                storage_chat_id=archive_chat_id,
-                storage_topic_id=archive_topic_id,
-                storage_message_id=archive_message_id,
-            )
-            enter_content_utils_edit_mode(utils_state, content_utils_kind)
-            try:
-                await refresh_content_utils_panel(
-                    message=message,
-                    codec=callback_codec,
-                    user_id=message.from_user.id,
-                    utils_state=utils_state,
-                    prohibited_store=prohibited_store,
-                    contacts_store=contacts_store,
-                )
-            except Exception:
-                await message.answer(
-                    "Медиа сохранено, но не удалось обновить панель. "
-                    "Нажмите «⬅️ Назад» и откройте раздел снова."
-                )
-                await _save_admin_utils_state(container, session, utils_state)
-                return
-            await _save_admin_utils_state(container, session, utils_state)
             return
         if utils_state.get("awaiting_faq_media_section_id"):
             section_id = int(utils_state.get("awaiting_faq_media_section_id"))

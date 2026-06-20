@@ -10,3 +10,12 @@ def extract_message_html(message: Message) -> str:
     if html_text:
         return html_text.strip()
     return message.text.strip()
+
+
+def extract_caption_html(message: Message) -> str:
+    if not message.caption:
+        return ""
+    html_text = getattr(message, "caption_html", None)
+    if html_text:
+        return html_text.strip()
+    return message.caption.strip()
