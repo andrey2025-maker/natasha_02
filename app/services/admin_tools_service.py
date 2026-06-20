@@ -685,15 +685,20 @@ class GroupTopicsStore:
         return int(chat_id), topic_id
 
     async def ensure_all_system_topics(self, bot) -> dict[str, int] | None:
-        chat_id, _ = await self.get_tg_topic("logs")
+        chat_id, logs_topic_id = await self.get_tg_topic("logs")
         if not chat_id:
             return None
         result: dict[str, int] = {"chat_id": int(chat_id)}
+        if logs_topic_id:
+            result["logs"] = int(logs_topic_id)
         for kind in ("logs", "payment", "questions", "buyout"):
+            if kind in result:
+                continue
             _, topic_id = await self.ensure_tg_topic(bot, kind)
-            if not topic_id:
-                return None
-            result[kind] = int(topic_id)
+            if topic_id:
+                result[kind] = int(topic_id)
+        if "logs" not in result:
+            return None
         return result
 
     async def set_vk_logs_peer_id(self, peer_id: int) -> None:
@@ -969,17 +974,25 @@ class BuyoutQuoteDraftStore:
                 "group_message_id": int(group_message_id) if group_message_id else None,
             },
         )
-        await self._db.set(self._token_key(draft_token), normalized_order)
+        await self._db.set(
+            self._token_key(draft_token),
+            {"order_number": normalized_order},
+        )
         return draft_token
 
     async def get_by_token(self, draft_token: str) -> dict | None:
         token = draft_token.strip()
         if not token:
             return None
-        order_number = await self._db.get(self._token_key(token))
-        if isinstance(order_number, str) and order_number.strip():
-            return await self.get(order_number.strip())
-        return None
+        payload = await self._db.get(self._token_key(token))
+        order_number = ""
+        if isinstance(payload, dict):
+            order_number = str(payload.get("order_number") or "").strip()
+        elif isinstance(payload, str):
+            order_number = payload.strip()
+        if not order_number:
+            return None
+        return await self.get(order_number)
 
     async def clear(self, order_number: str) -> None:
         normalized_order = order_number.strip()

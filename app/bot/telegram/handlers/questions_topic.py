@@ -106,11 +106,9 @@ async def forward_message_to_dialog_topic(
     if is_admin is None:
         is_admin = user_is_admin
     admin_topic = user_is_admin and profile is None
-    topics = await group_topics_store.ensure_all_system_topics(message.bot)
-    if not topics:
+    logs_chat_id, logs_default_topic_id = await group_topics_store.get_tg_topic("logs")
+    if not logs_chat_id:
         return None
-    logs_chat_id = int(topics["chat_id"])
-    logs_default_topic_id = topics.get("logs")
 
     dialog_topic_id = await ensure_dialog_topic_for_telegram_user(
         bot=message.bot,
@@ -173,20 +171,24 @@ async def forward_idle_message_to_questions_topic(
         return
 
     profile = await container.profile_repo.get_by_platform_user(Platform.TELEGRAM, message.from_user.id)
-    topics = await group_topics_store.ensure_all_system_topics(message.bot)
-    if not topics:
+    logs_chat_id, _ = await group_topics_store.get_tg_topic("logs")
+    if not logs_chat_id:
         if send_ack:
             await message.answer(
                 "Группа не настроена. Админу: Утилиты → Группа → укажите chat_id."
             )
         return
-    logs_chat_id = int(topics["chat_id"])
-    logs_default_topic_id = topics.get("logs")
-    questions_chat_id = int(topics["chat_id"])
-    questions_topic_id = topics.get("questions")
+    questions_chat_id, questions_topic_id = await group_topics_store.get_tg_topic("questions")
     if not questions_topic_id:
+        questions_chat_id, questions_topic_id = await group_topics_store.ensure_tg_topic(
+            message.bot,
+            "questions",
+        )
+    if not questions_chat_id or not questions_topic_id:
         if send_ack:
-            await message.answer("Передал вопрос менеджеру. Ответим в этом чате как можно скорее.")
+            await message.answer(
+                "Не удалось использовать тему «вопросы». Проверьте права бота на управление темами."
+            )
         return
 
     copied = await forward_message_to_dialog_topic(

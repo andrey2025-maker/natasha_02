@@ -467,11 +467,11 @@ def _h(value: object) -> str:
 
 
 _MY_ORDERS_ALWAYS_VISIBLE = {
-    OrderStatus.PENDING,
     OrderStatus.PRICE_READY,
     OrderStatus.WAITING_PAYMENT,
 }
 _MY_ORDERS_FILTER_STATUSES = (
+    OrderStatus.PENDING,
     OrderStatus.ISSUED,
     OrderStatus.PICKUP_POINT,
     OrderStatus.IN_TRANSIT,

@@ -153,6 +153,7 @@ def _my_orders_filters_rows(
     codec: CallbackCodec,
 ) -> InlineKeyboardMarkup:
     spec_statuses = (
+        OrderStatus.PENDING,
         OrderStatus.ISSUED,
         OrderStatus.PICKUP_POINT,
         OrderStatus.IN_TRANSIT,
@@ -181,6 +182,7 @@ def _my_orders_filters_rows(
 
 def _my_orders_filter_title(status: OrderStatus) -> str:
     titles = {
+        OrderStatus.PENDING: "Ожидание",
         OrderStatus.ISSUED: "Выданные",
         OrderStatus.PICKUP_POINT: "В пункте выдачи",
         OrderStatus.IN_TRANSIT: "В пути",

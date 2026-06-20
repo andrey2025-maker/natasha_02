@@ -794,7 +794,10 @@ def build_buyout_router(container: AppContainer) -> Router:
             return
 
         topics = await group_topics_store.ensure_all_system_topics(message.bot)
-        if not topics:
+        if not topics or "buyout" not in topics:
+            await message.reply(
+                "Тема «Выкупы» недоступна. Проверьте chat_id группы и права бота на управление темами."
+            )
             return
         target_chat_id = int(topics["chat_id"])
         target_topic_id = int(topics["buyout"])
@@ -803,9 +806,8 @@ def build_buyout_router(container: AppContainer) -> Router:
         if message.message_thread_id != target_topic_id:
             return
 
-        payment_chat_id = int(topics["chat_id"])
-        payment_topic_id = int(topics["payment"])
-        if int(message.chat.id) == payment_chat_id and message.message_thread_id == payment_topic_id:
+        payment_topic_id = topics.get("payment")
+        if payment_topic_id and int(message.chat.id) == target_chat_id and message.message_thread_id == int(payment_topic_id):
             pending = await payment_reject_pending_store.get(
                 chat_id=int(message.chat.id),
                 message_id=int(message.reply_to_message.message_id),
@@ -893,13 +895,17 @@ def build_buyout_router(container: AppContainer) -> Router:
             await message.reply("Не удалось сохранить цену.")
             return
 
-        draft_token = await quote_draft_store.save(
-            order_number=order_number,
-            price_rub=price_rub,
-            manager_comment=comment,
-            manager_user_id=message.from_user.id,
-            group_message_id=int(message.reply_to_message.message_id),
-        )
+        try:
+            draft_token = await quote_draft_store.save(
+                order_number=order_number,
+                price_rub=price_rub,
+                manager_comment=comment,
+                manager_user_id=message.from_user.id,
+                group_message_id=int(message.reply_to_message.message_id),
+            )
+        except Exception:
+            await message.reply("Не удалось сохранить черновик цены.")
+            return
         group_text = _format_buyout_group_order_text(
             order,
             profile,
