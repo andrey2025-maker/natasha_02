@@ -74,7 +74,7 @@ def register_media_messages(router: Router, ctx: AdminContext) -> None:
         if not await _ensure_admin(message):
             raise SkipHandler
         if not message.from_user:
-            return
+            raise SkipHandler
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
         utils_state = _get_admin_utils_state(session)
         if await try_handle_content_utils_submission(
@@ -225,7 +225,7 @@ def register_media_messages(router: Router, ctx: AdminContext) -> None:
 
         state = _get_admin_broadcast_state(session)
         if not state.get("awaiting_payload"):
-            return
+            raise SkipHandler
         audience = str(state.get("audience") or "")
         if audience not in {"all", "active", "inactive"}:
             await message.answer("Сначала выберите аудиторию в разделе «Рассылка».")

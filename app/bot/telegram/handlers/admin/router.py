@@ -21,9 +21,9 @@ def build_admin_router(container: AppContainer) -> Router:
     register_menu_messages(router, ctx)
     register_utils_messages(router, ctx)
     register_orders_messages(router, ctx)
+    register_media_messages(router, ctx)
     register_text_catchall(router, ctx)
     register_blocks_messages(router, ctx)
-    register_media_messages(router, ctx)
     register_admins_messages(router, ctx)
     register_callbacks(router, ctx)
 

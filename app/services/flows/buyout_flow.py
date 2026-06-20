@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from html import escape
 from urllib.parse import urlparse
@@ -18,6 +18,7 @@ class BuyoutFlowResponse:
     state: DialogState
     state_data: dict
     reply_markup: object | None = None
+    order_media_groups: list[tuple[str, list[dict]]] = field(default_factory=list)
 
 
 class BuyoutFlowService:
@@ -202,14 +203,15 @@ class BuyoutFlowService:
             orders = await self._orders.list_for_user(profile.id, limit=page_size, offset=offset, statuses=statuses)
 
         lines: list[str] = []
+        order_media_groups: list[tuple[str, list[dict]]] = []
         for order in orders:
             history = await self._orders.list_status_history(order.id, limit=3)
             history_text = _format_history_short(history)
             media_items = await self._orders.list_order_media(order.id)
-            media_indexes = ",".join(str(i) for i in range(1, len(media_items) + 1)) if media_items else ""
+            media_dicts = _collect_order_media_dicts(order, media_items)
+            if media_dicts:
+                order_media_groups.append((order.order_number, media_dicts))
             order_lines = [f"<b>Выкуп №{_h(order.order_number)}</b>"]
-            if media_indexes:
-                order_lines.append(f"Медиа: {_h(media_indexes)}")
             order_lines.extend(
                 [
                     f"Статус: <b>{_h(_status_title(order.status))}</b> ({order.updated_at.strftime('%d.%m.%y')})",
@@ -234,6 +236,7 @@ class BuyoutFlowService:
             text=text,
             state=DialogState.IDLE,
             state_data={"page": safe_page, "total_pages": total_pages},
+            order_media_groups=order_media_groups,
         )
 
     async def toggle_status_filter(self, session: UserSession, status: OrderStatus) -> None:
@@ -434,6 +437,56 @@ def _safe_int(value: object) -> int | None:
 def _safe_str(value: object) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _order_media_item_to_stored_dict(item: OrderMediaItem) -> dict | None:
+    media_type = str(item.media_type or "").strip()
+    file_id = str(item.tg_file_id or "").strip()
+    storage_chat_id = int(item.tg_chat_id) if item.tg_chat_id else None
+    storage_message_id = int(item.tg_message_id) if item.tg_message_id else None
+    if storage_chat_id and storage_message_id:
+        return {
+            "media_type": media_type if media_type in {"photo", "video", "animation", "document"} else "photo",
+            "file_id": file_id,
+            "storage_chat_id": storage_chat_id,
+            "storage_message_id": storage_message_id,
+        }
+    if file_id and media_type in {"photo", "video", "animation", "document"}:
+        return {
+            "media_type": media_type,
+            "file_id": file_id,
+            "storage_chat_id": None,
+            "storage_message_id": None,
+        }
+    return None
+
+
+def _collect_order_media_dicts(order: BuyoutOrder, items: list[OrderMediaItem]) -> list[dict]:
+    result: list[dict] = []
+    seen: set[tuple[int | None, int | None, str]] = set()
+    for item in items:
+        media = _order_media_item_to_stored_dict(item)
+        if not media:
+            continue
+        key = (
+            media.get("storage_chat_id"),
+            media.get("storage_message_id"),
+            str(media.get("file_id", "")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(media)
+    if not result and order.media_storage_chat_id and order.media_storage_message_id:
+        result.append(
+            {
+                "media_type": "photo",
+                "file_id": "",
+                "storage_chat_id": int(order.media_storage_chat_id),
+                "storage_message_id": int(order.media_storage_message_id),
+            }
+        )
+    return result
 
 
 def _dedupe_media_items(items: list[dict]) -> list[dict]:

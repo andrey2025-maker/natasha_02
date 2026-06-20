@@ -75,7 +75,7 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
     @router.callback_query()
     async def admin_callbacks(callback: CallbackQuery) -> None:
         if not callback.data or not callback.from_user or not callback.message:
-            return
+            raise SkipHandler
         if not await container.admin_service.is_admin(callback.from_user.id):
             raise SkipHandler
         try:

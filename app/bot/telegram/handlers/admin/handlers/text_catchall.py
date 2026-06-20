@@ -78,8 +78,10 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
     async def admin_order_edit_input(message: Message) -> None:
         if not await _ensure_admin(message):
             raise SkipHandler
-        if not message.from_user or not message.text:
-            return
+        if not message.from_user:
+            raise SkipHandler
+        if not message.text:
+            raise SkipHandler
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
         broadcast_state = _get_admin_broadcast_state(session)
         utils_state = _get_admin_utils_state(session)

@@ -17,6 +17,7 @@ from app.bot.telegram.keyboards.profile import (
     main_menu_keyboard,
     my_orders_message_keyboard,
 )
+from app.bot.telegram.my_orders_media import sync_my_orders_media
 from app.core.container import AppContainer
 from app.domain.enums import DialogState, OrderStatus, Platform
 from app.domain.models import OutboundMessage
@@ -100,6 +101,13 @@ def build_buyout_router(container: AppContainer) -> Router:
         response = await container.buyout_flow.render_orders(session, page=1)
         response.reply_markup = await _orders_reply_markup(message.from_user.id, session, response)
         await _reply(message, response)
+        await sync_my_orders_media(
+            message.bot,
+            message.chat.id,
+            session,
+            container,
+            order_media_groups=response.order_media_groups,
+        )
 
     @router.message(F.text.in_({"Фильтры заказов", "🎛 Фильтры заказов"}))
     async def show_filters(message: Message) -> None:
@@ -113,11 +121,18 @@ def build_buyout_router(container: AppContainer) -> Router:
         response = await container.buyout_flow.render_orders(session, page=1)
         response.reply_markup = await _orders_reply_markup(message.from_user.id, session, response)
         await _reply(message, response)
+        await sync_my_orders_media(
+            message.bot,
+            message.chat.id,
+            session,
+            container,
+            order_media_groups=response.order_media_groups,
+        )
 
     @router.callback_query()
     async def my_orders_pagination(callback: CallbackQuery) -> None:
         if not callback.data or not callback.from_user or not callback.message:
-            return
+            raise SkipHandler
         if await _is_blocked_user(callback.from_user.id):
             await callback.answer("Доступ ограничен", show_alert=True)
             return
@@ -720,6 +735,13 @@ def build_buyout_router(container: AppContainer) -> Router:
             )
             await callback.answer("Фильтр обновлен")
             await callback.message.edit_text(response.text, parse_mode="HTML", reply_markup=reply_markup)
+            await sync_my_orders_media(
+                callback.message.bot,
+                callback.message.chat.id,
+                session,
+                container,
+                order_media_groups=response.order_media_groups,
+            )
             return
 
         if not action.startswith("my_orders:"):
@@ -742,6 +764,13 @@ def build_buyout_router(container: AppContainer) -> Router:
         )
         await callback.answer()
         await callback.message.edit_text(response.text, parse_mode="HTML", reply_markup=response.reply_markup)
+        await sync_my_orders_media(
+            callback.message.bot,
+            callback.message.chat.id,
+            session,
+            container,
+            order_media_groups=response.order_media_groups,
+        )
 
     @router.message(F.photo | F.video | F.animation | F.document)
     async def handle_buyout_media(message: Message) -> None:
@@ -945,7 +974,7 @@ def build_buyout_router(container: AppContainer) -> Router:
     @router.message()
     async def buyout_text_flow(message: Message) -> None:
         if not message.from_user or not message.text:
-            return
+            raise SkipHandler
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return

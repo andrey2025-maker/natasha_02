@@ -340,10 +340,10 @@ async def try_handle_content_utils_submission(
         return False
 
     media_type, file_id = _extract_incoming_media(message)
-    if message.text:
-        html_text = extract_message_html(message)
-    elif media_type:
+    if media_type and file_id:
         html_text = extract_caption_html(message)
+    elif message.text:
+        html_text = extract_message_html(message)
     else:
         return False
 
@@ -360,23 +360,30 @@ async def try_handle_content_utils_submission(
     from app.bot.telegram.handlers.admin.group_topics import _archive_media_in_group_topic
     from app.bot.telegram.handlers.admin.vk_sync import _sync_vk_attachment_from_tg
 
-    if message.text:
-        await store.save_text(html_text)
-        await store.clear_media()
-    elif media_type and file_id:
+    if media_type and file_id:
         if html_text:
             await store.save_text(html_text)
-        archive_chat_id, archive_topic_id, archive_message_id = await _archive_media_in_group_topic(
-            message=message,
-            group_topics_store=group_topics_store,
-            label=f"{kind}_media",
-        )
-        vk_attachment = await _sync_vk_attachment_from_tg(
-            message=message,
-            container=container,
-            media_type=media_type,
-            file_id=file_id,
-        )
+        archive_chat_id = None
+        archive_topic_id = None
+        archive_message_id = None
+        vk_attachment = None
+        try:
+            archive_chat_id, archive_topic_id, archive_message_id = await _archive_media_in_group_topic(
+                message=message,
+                group_topics_store=group_topics_store,
+                label=f"{kind}_media",
+            )
+        except Exception:
+            pass
+        try:
+            vk_attachment = await _sync_vk_attachment_from_tg(
+                message=message,
+                container=container,
+                media_type=media_type,
+                file_id=file_id,
+            )
+        except Exception:
+            pass
         await store.replace_media(
             [
                 {
@@ -390,6 +397,9 @@ async def try_handle_content_utils_submission(
                 }
             ]
         )
+    else:
+        await store.save_text(html_text)
+        await store.clear_media()
 
     utils_state["content_utils_screen"] = SCREEN_VIEW
     utils_state["awaiting_content_utils_media"] = None

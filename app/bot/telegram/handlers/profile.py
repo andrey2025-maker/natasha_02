@@ -9,6 +9,7 @@ from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
 from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.keyboards.main_menu import my_orders_message_keyboard
 from app.bot.telegram.keyboards.profile import platforms_keyboard, profile_menu_keyboard
+from app.bot.telegram.my_orders_media import sync_my_orders_media
 from app.bot.texts import messages as msg
 from app.core.container import AppContainer
 from app.domain.enums import DialogState, Platform
@@ -223,7 +224,7 @@ def build_profile_router(container: AppContainer) -> Router:
     @router.callback_query()
     async def profile_callbacks(callback: CallbackQuery) -> None:
         if not callback.from_user or not callback.data or not callback.message:
-            return
+            raise SkipHandler
         if await _is_blocked_user(callback.from_user.id):
             await callback.answer("Доступ ограничен", show_alert=True)
             return
@@ -287,6 +288,13 @@ def build_profile_router(container: AppContainer) -> Router:
                 )
             await callback.answer()
             await _apply_response(callback.message, response, edit=True)
+            await sync_my_orders_media(
+                callback.message.bot,
+                callback.message.chat.id,
+                session,
+                container,
+                order_media_groups=response.order_media_groups,
+            )
             return
         if action == "profile:buyout_filters":
             await container.buyout_flow.prepare_preferences(session)
@@ -302,6 +310,13 @@ def build_profile_router(container: AppContainer) -> Router:
                 )
             await callback.answer()
             await _apply_response(callback.message, response, edit=True)
+            await sync_my_orders_media(
+                callback.message.bot,
+                callback.message.chat.id,
+                session,
+                container,
+                order_media_groups=response.order_media_groups,
+            )
             return
         response = await container.profile_flow.handle_callback(session, action, callback_codec)
         if action in {"passport_yes", "passport_no"}:
@@ -312,9 +327,9 @@ def build_profile_router(container: AppContainer) -> Router:
     @router.message(F.photo | F.video | F.animation | F.document)
     async def profile_idle_media_flow(message: Message) -> None:
         if not message.from_user:
-            return
+            raise SkipHandler
         if message.chat.type != "private":
-            return
+            raise SkipHandler
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
@@ -371,9 +386,9 @@ def build_profile_router(container: AppContainer) -> Router:
     @router.message()
     async def profile_text_flow(message: Message) -> None:
         if not message.from_user or not message.text:
-            return
+            raise SkipHandler
         if message.chat.type != "private":
-            return
+            raise SkipHandler
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return

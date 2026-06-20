@@ -123,11 +123,11 @@ def build_questions_router(container: AppContainer) -> Router:
     @router.message(F.chat.type.in_({"group", "supergroup"}), F.text)
     async def manager_text_in_topic(message: Message) -> None:
         if not message.from_user or not message.text:
-            return
+            raise SkipHandler
         if message.text.startswith("/"):
-            return
+            raise SkipHandler
         if not await container.admin_service.is_admin(message.from_user.id):
-            return
+            raise SkipHandler
         relayed = await _relay_topic_reply_to_user(
             message=message,
             container=container,
@@ -140,9 +140,9 @@ def build_questions_router(container: AppContainer) -> Router:
     @router.message(F.chat.type.in_({"group", "supergroup"}), F.photo | F.video | F.animation | F.document)
     async def manager_media_in_topic(message: Message) -> None:
         if not message.from_user:
-            return
+            raise SkipHandler
         if not await container.admin_service.is_admin(message.from_user.id):
-            return
+            raise SkipHandler
         relayed = await _relay_topic_reply_to_user(
             message=message,
             container=container,
@@ -174,7 +174,7 @@ def build_questions_router(container: AppContainer) -> Router:
     @router.callback_query()
     async def faq_callbacks(callback: CallbackQuery) -> None:
         if not callback.from_user or not callback.data or not callback.message:
-            return
+            raise SkipHandler
         if await _is_blocked_user(callback.from_user.id):
             await callback.answer("Доступ ограничен", show_alert=True)
             return
