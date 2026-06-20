@@ -71,6 +71,56 @@ def _enter_edit_mode(utils_state: dict, kind: str) -> None:
     utils_state["awaiting_content_utils_media"] = kind
 
 
+def enter_content_utils_edit_mode(utils_state: dict, kind: str) -> None:
+    _enter_edit_mode(utils_state, kind)
+
+
+def content_utils_edit_kind(utils_state: dict) -> str | None:
+    kind = str(utils_state.get("content_utils_kind") or "")
+    if kind not in {"prohibited", "contacts"}:
+        return None
+    if str(utils_state.get("content_utils_screen") or "") == SCREEN_EDIT_TEXT:
+        return kind
+    if utils_state.get("awaiting_content_utils_media") in {"prohibited", "contacts"}:
+        return kind
+    return None
+
+
+async def _publish_panel_message(
+    anchor: Message,
+    *,
+    utils_state: dict,
+    text: str,
+    media_items: list[dict],
+    keyboard: InlineKeyboardMarkup,
+) -> None:
+    chat_id = int(utils_state.get("content_utils_panel_chat_id") or anchor.chat.id)
+    old_message_id = utils_state.get("content_utils_panel_message_id")
+
+    sent = await send_content_with_media_to_telegram(
+        anchor,
+        text=text,
+        media_items=media_items,
+        reply_markup=keyboard,
+    )
+    if sent is None:
+        sent = await anchor.bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+
+    utils_state["content_utils_panel_chat_id"] = int(sent.chat.id)
+    utils_state["content_utils_panel_message_id"] = int(sent.message_id)
+
+    if old_message_id and int(old_message_id) != int(sent.message_id):
+        try:
+            await anchor.bot.delete_message(chat_id, int(old_message_id))
+        except Exception:
+            pass
+
+
 async def open_content_utils_panel(
     message: Message,
     *,
@@ -96,17 +146,6 @@ async def open_content_utils_panel(
     )
 
 
-async def _delete_panel_message(message: Message, utils_state: dict) -> None:
-    chat_id = utils_state.get("content_utils_panel_chat_id")
-    panel_message_id = utils_state.get("content_utils_panel_message_id")
-    if not chat_id or not panel_message_id:
-        return
-    try:
-        await message.bot.delete_message(int(chat_id), int(panel_message_id))
-    except Exception:
-        pass
-
-
 async def refresh_content_utils_panel(
     *,
     message: Message,
@@ -118,6 +157,9 @@ async def refresh_content_utils_panel(
     force_new: bool = False,
 ) -> None:
     kind = str(utils_state.get("content_utils_kind") or "")
+    if kind not in {"prohibited", "contacts"}:
+        return
+
     store = _store_for_kind(
         kind,
         prohibited_store=prohibited_store,
@@ -134,21 +176,14 @@ async def refresh_content_utils_panel(
     chat_id = int(utils_state.get("content_utils_panel_chat_id") or message.chat.id)
     panel_message_id = utils_state.get("content_utils_panel_message_id")
 
-    async def _send_fresh() -> None:
-        await _delete_panel_message(message, utils_state)
-        sent = await send_content_with_media_to_telegram(
+    if force_new or media_items:
+        await _publish_panel_message(
             message,
+            utils_state=utils_state,
             text=text,
             media_items=media_items,
-            reply_markup=keyboard,
+            keyboard=keyboard,
         )
-        if sent is None:
-            sent = await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
-        utils_state["content_utils_panel_chat_id"] = int(sent.chat.id)
-        utils_state["content_utils_panel_message_id"] = int(sent.message_id)
-
-    if force_new or media_items:
-        await _send_fresh()
         return
 
     if panel_message_id:
@@ -167,14 +202,23 @@ async def refresh_content_utils_panel(
                 return
 
     if panel_message_id and int(panel_message_id) == int(message.message_id):
-        await edit_panel_message(
-            message,
-            text=text,
-            reply_markup=keyboard,
-        )
-        return
+        try:
+            await edit_panel_message(
+                message,
+                text=text,
+                reply_markup=keyboard,
+            )
+            return
+        except TelegramBadRequest:
+            pass
 
-    await _send_fresh()
+    await _publish_panel_message(
+        message,
+        utils_state=utils_state,
+        text=text,
+        media_items=media_items,
+        keyboard=keyboard,
+    )
 
 
 async def handle_content_utils_callback(
@@ -222,6 +266,8 @@ async def handle_content_utils_callback(
 
     if suffix in {"edit", "text", "media"}:
         _enter_edit_mode(utils_state, kind)
+        utils_state["content_utils_panel_chat_id"] = int(callback.message.chat.id)
+        utils_state["content_utils_panel_message_id"] = int(callback.message.message_id)
         await callback.answer()
         await refresh_content_utils_panel(
             message=callback.message,
@@ -236,15 +282,19 @@ async def handle_content_utils_callback(
     if suffix == "media_done":
         utils_state["content_utils_screen"] = SCREEN_VIEW
         utils_state["awaiting_content_utils_media"] = None
+        try:
+            await refresh_content_utils_panel(
+                message=callback.message,
+                codec=codec,
+                user_id=user_id,
+                utils_state=utils_state,
+                prohibited_store=prohibited_store,
+                contacts_store=contacts_store,
+            )
+        except Exception:
+            await callback.answer("Не удалось обновить раздел", show_alert=True)
+            return True
         await callback.answer("Сохранено")
-        await refresh_content_utils_panel(
-            message=callback.message,
-            codec=codec,
-            user_id=user_id,
-            utils_state=utils_state,
-            prohibited_store=prohibited_store,
-            contacts_store=contacts_store,
-        )
         return True
 
     if suffix == "clear":

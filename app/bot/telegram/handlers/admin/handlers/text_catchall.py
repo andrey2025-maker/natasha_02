@@ -29,6 +29,7 @@ from app.bot.telegram.handlers.content_utils_admin import (
     SCREEN_EDIT_MEDIA as CONTENT_UTILS_EDIT_MEDIA,
     SCREEN_EDIT_MENU as CONTENT_UTILS_EDIT_MENU,
     SCREEN_EDIT_TEXT as CONTENT_UTILS_EDIT_TEXT,
+    content_utils_edit_kind,
     handle_content_utils_callback,
     refresh_content_utils_panel,
     reset_content_utils_state,
@@ -188,7 +189,7 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
             return
 
         if utils_state.get("awaiting_content_utils_media"):
-            if str(utils_state.get("content_utils_screen") or "") != CONTENT_UTILS_EDIT_TEXT:
+            if content_utils_edit_kind(utils_state) is None:
                 await message.answer(
                     "Сейчас ожидается медиа. Отправьте фото, видео или GIF, "
                     "либо нажмите «Готово» в сообщении выше."
