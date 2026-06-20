@@ -40,6 +40,22 @@ class FaqService:
         section.title = title.strip()
         return await self.repository.update(section)
 
+    async def collect_section_tree_ids(self, section_id: int) -> list[int]:
+        ids = [section_id]
+        for child in await self.list_children(section_id):
+            ids.extend(await self.collect_section_tree_ids(child.id))
+        return ids
+
+    async def delete_section(self, section_id: int) -> list[int] | None:
+        section = await self.repository.get_by_id(section_id)
+        if not section:
+            return None
+        tree_ids = await self.collect_section_tree_ids(section_id)
+        deleted = await self.repository.delete(section_id)
+        if not deleted:
+            return None
+        return tree_ids
+
     async def breadcrumbs(self, section_id: int | None) -> str:
         if section_id is None:
             return "Вопросы"

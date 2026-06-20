@@ -234,3 +234,7 @@ class FaqRepository(ABC):
     @abstractmethod
     async def update(self, section: FaqSection) -> FaqSection:
         raise NotImplementedError
+
+    @abstractmethod
+    async def delete(self, section_id: int) -> bool:
+        raise NotImplementedError

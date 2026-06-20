@@ -84,3 +84,8 @@ class PostgresFaqRepository(FaqRepository):
         if not row:
             raise ValueError("FAQ section not found")
         return _row_to_section(row)
+
+    async def delete(self, section_id: int) -> bool:
+        async with self._pool.acquire() as conn:
+            result = await conn.execute("DELETE FROM faq_sections WHERE id = $1", section_id)
+        return result.endswith("1")

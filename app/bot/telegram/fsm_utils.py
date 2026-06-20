@@ -93,7 +93,7 @@ def admin_utils_has_waiter(utils_state: dict) -> bool:
         return True
     if utils_state.get("awaiting_faq_media_section_id"):
         return True
-    if utils_state.get("awaiting_faq_action"):
+    if utils_state.get("faq_admin_screen") in {"add_title", "rename_title", "edit_text"}:
         return True
     if utils_state.get("awaiting_block_reason_for_code"):
         return True

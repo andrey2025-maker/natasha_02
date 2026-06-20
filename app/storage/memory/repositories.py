@@ -370,3 +370,18 @@ class InMemoryFaqRepository(FaqRepository):
             raise ValueError("FAQ section not found")
         self._sections[section.id] = deepcopy(section)
         return deepcopy(section)
+
+    async def delete(self, section_id: int) -> bool:
+        if section_id not in self._sections:
+            return False
+        to_delete = {section_id}
+        changed = True
+        while changed:
+            changed = False
+            for item_id, item in list(self._sections.items()):
+                if item.parent_id in to_delete and item_id not in to_delete:
+                    to_delete.add(item_id)
+                    changed = True
+        for item_id in to_delete:
+            self._sections.pop(item_id, None)
+        return True

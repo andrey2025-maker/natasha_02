@@ -24,10 +24,9 @@ from app.services.dialog_topic_profile_sync import (
 
 def build_tg_forum_message_link(chat_id: int, message_id: int, topic_id: int | None) -> str:
     internal_chat_id = str(int(chat_id)).removeprefix("-100")
-    link = f"https://t.me/c/{internal_chat_id}/{int(message_id)}"
     if topic_id:
-        link += f"?thread={int(topic_id)}"
-    return link
+        return f"https://t.me/c/{internal_chat_id}/{int(topic_id)}/{int(message_id)}"
+    return f"https://t.me/c/{internal_chat_id}/{int(message_id)}"
 
 
 def format_omsk_now() -> str:
@@ -242,7 +241,11 @@ async def forward_idle_message_to_questions_topic(
                 InlineKeyboardButton(
                     text="🔴 Обработать",
                     callback_data=callback_codec.encode_public(f"questions:process:{alert_token}"),
-                )
+                ),
+                InlineKeyboardButton(
+                    text="🔗 Открыть в диалоге",
+                    url=dialog_link,
+                ),
             ]
         ]
     )
@@ -358,7 +361,13 @@ async def handle_questions_process_callback(
                     text=f"🟢 {processed_at}",
                     callback_data=callback_codec.encode_public(f"questions:processed:{alert_token}"),
                 )
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔗 Открыть в диалоге",
+                    url=dialog_link,
+                )
+            ],
         ]
     )
 
@@ -379,5 +388,5 @@ async def handle_questions_process_callback(
     except Exception:
         pass
 
-    await callback.answer(url=dialog_link)
+    await callback.answer("Обработано")
     return True

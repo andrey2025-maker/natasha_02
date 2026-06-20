@@ -24,6 +24,15 @@ from app.bot.telegram.fsm_utils import (
     is_cancel_command,
     is_navigation_command,
 )
+from app.bot.telegram.handlers.faq_admin import (
+    SCREEN_CONTENT,
+    SCREEN_EDIT_MEDIA,
+    handle_faq_admin_callback,
+    open_faq_admin_panel,
+    refresh_faq_admin_panel,
+    reset_faq_admin_state,
+    try_handle_faq_admin_text,
+)
 from app.bot.telegram.handlers.questions_topic import ensure_dialog_topic_for_telegram_user
 from app.services.dialog_topic_profile_sync import refresh_dialog_topic_profile
 from app.bot.telegram.keyboards.profile import main_menu_keyboard
@@ -648,6 +657,25 @@ def build_admin_router(container: AppContainer) -> Router:
         ):
             await message.answer("Режим добавления медиа сейчас не активен.")
             return
+        if (
+            state.get("awaiting_faq_media_section_id")
+            and str(state.get("faq_admin_screen") or "") == SCREEN_EDIT_MEDIA
+        ):
+            section_id = int(state["awaiting_faq_media_section_id"])
+            state["faq_admin_screen"] = SCREEN_CONTENT
+            state["faq_admin_target_section_id"] = section_id
+            state["awaiting_faq_media_section_id"] = None
+            await _save_admin_utils_state(container, session, state)
+            await refresh_faq_admin_panel(
+                message=message,
+                container=container,
+                codec=callback_codec,
+                user_id=message.from_user.id,
+                utils_state=state,
+                faq_media_store=faq_media_store,
+            )
+            await message.answer("Сохранено")
+            return
         state["awaiting_payment_media"] = False
         state["awaiting_prohibited_media"] = False
         state["awaiting_delivery_media"] = False
@@ -858,17 +886,22 @@ def build_admin_router(container: AppContainer) -> Router:
                 )
             return
         if utils_state.get("awaiting_faq_media_section_id"):
-            section_id = int(utils_state.get("awaiting_faq_media_section_id"))
-            handled = await _handle_media_text_command(
-                message=message,
-                store=faq_media_store,
-                section_name=f"FAQ {section_id}",
-                section_id=section_id,
-            )
-            if not handled:
+            if str(utils_state.get("faq_admin_screen") or "") == SCREEN_EDIT_MEDIA:
                 await message.answer(
-                    "Сейчас ожидается медиа FAQ. Используйте «Удалить медиа &lt;номер&gt;» или «Готово медиа»."
+                    "Сейчас ожидается медиа. Отправьте фото, видео или GIF, "
+                    "либо нажмите «Готово медиа» в сообщении выше."
                 )
+                return
+            return
+
+        if await try_handle_faq_admin_text(
+            message,
+            container=container,
+            codec=callback_codec,
+            faq_media_store=faq_media_store,
+            utils_state=utils_state,
+        ):
+            await _save_admin_utils_state(container, session, utils_state)
             return
 
         if utils_state.get("awaiting_codes_add"):
@@ -1033,49 +1066,6 @@ def build_admin_router(container: AppContainer) -> Router:
                 except Exception:
                     pass
             return
-
-        faq_action = str(utils_state.get("awaiting_faq_action") or "")
-        if faq_action in {"add", "title", "text"}:
-            if "|" not in message.text:
-                await message.answer("Неверный формат, используйте разделитель `|`.", parse_mode="Markdown")
-                return
-            left, right = [part.strip() for part in message.text.split("|", maxsplit=1)]
-            try:
-                parsed_id = int(left) if left != "root" else None
-            except ValueError:
-                await message.answer("ID раздела должен быть числом или `root`.", parse_mode="Markdown")
-                return
-            if faq_action == "add":
-                parent_id = parsed_id
-                created = await container.faq_service.create_section(parent_id=parent_id, title=right)
-                utils_state["awaiting_faq_action"] = None
-                await _save_admin_utils_state(container, session, utils_state)
-                await message.answer(f"Раздел создан: {created.id} — {created.title}")
-                return
-            if faq_action == "title":
-                if parsed_id is None:
-                    await message.answer("Для редактирования нужен конкретный ID раздела.")
-                    return
-                updated = await container.faq_service.update_section_title(parsed_id, right)
-                utils_state["awaiting_faq_action"] = None
-                await _save_admin_utils_state(container, session, utils_state)
-                if not updated:
-                    await message.answer("Раздел не найден.")
-                    return
-                await message.answer(f"Заголовок обновлен: {updated.id} — {updated.title}")
-                return
-            if faq_action == "text":
-                if parsed_id is None:
-                    await message.answer("Для редактирования нужен конкретный ID раздела.")
-                    return
-                updated = await container.faq_service.update_section_text(parsed_id, right)
-                utils_state["awaiting_faq_action"] = None
-                await _save_admin_utils_state(container, session, utils_state)
-                if not updated:
-                    await message.answer("Раздел не найден.")
-                    return
-                await message.answer(f"Текст обновлен для раздела {updated.id}.")
-                return
 
         if utils_state.get("awaiting_profile_search_query"):
             mode = str(utils_state.get("profile_search_mode") or "").strip().lower()
@@ -1521,8 +1511,8 @@ def build_admin_router(container: AppContainer) -> Router:
                 suffix = " и синхронизировано в VK." if vk_attachment else ". VK синхронизация не выполнена."
                 await message.answer("Медиа запрещенки добавлено" + suffix + " Отправьте ещё или «Готово медиа».")
             return
-        faq_section_id = utils_state.get("awaiting_faq_media_section_id")
-        if faq_section_id:
+        if utils_state.get("awaiting_faq_media_section_id"):
+            section_id = int(utils_state.get("awaiting_faq_media_section_id"))
             media_type = ""
             file_id = ""
             if message.photo:
@@ -1541,7 +1531,7 @@ def build_admin_router(container: AppContainer) -> Router:
                 archive_chat_id, archive_topic_id, archive_message_id = await _archive_media_in_group_topic(
                     message=message,
                     group_topics_store=group_topics_store,
-                    label=f"faq_media_{faq_section_id}",
+                    label=f"faq_media_{section_id}",
                 )
                 vk_attachment = await _sync_vk_attachment_from_tg(
                     message=message,
@@ -1550,7 +1540,7 @@ def build_admin_router(container: AppContainer) -> Router:
                     file_id=file_id,
                 )
                 await faq_media_store.save_media(
-                    section_id=int(faq_section_id),
+                    section_id=int(section_id),
                     media_type=media_type,
                     file_id=file_id,
                     caption=message.caption or "",
@@ -1560,10 +1550,20 @@ def build_admin_router(container: AppContainer) -> Router:
                     storage_message_id=archive_message_id,
                 )
                 await _save_admin_utils_state(container, session, utils_state)
-                suffix = " и синхронизировано в VK." if vk_attachment else ". VK синхронизация не выполнена."
-                await message.answer(
-                    f"FAQ медиа (раздел {faq_section_id}) добавлено{suffix} Отправьте ещё или «Готово медиа»."
-                )
+                if str(utils_state.get("faq_admin_screen") or "") == SCREEN_EDIT_MEDIA:
+                    await refresh_faq_admin_panel(
+                        message=message,
+                        container=container,
+                        codec=callback_codec,
+                        user_id=message.from_user.id,
+                        utils_state=utils_state,
+                        faq_media_store=faq_media_store,
+                    )
+                else:
+                    suffix = " и синхронизировано в VK." if vk_attachment else ". VK синхронизация не выполнена."
+                    await message.answer(
+                        f"FAQ медиа (раздел {section_id}) добавлено{suffix} Отправьте ещё или «Готово медиа»."
+                    )
             return
 
         state = _get_admin_broadcast_state(session)
@@ -1615,84 +1615,6 @@ def build_admin_router(container: AppContainer) -> Router:
             ),
         )
 
-    @router.message(F.text == "Вопросы")
-    async def faq_admin_help(message: Message) -> None:
-        if not await _ensure_admin(message):
-            return
-        if not message.from_user:
-            return
-        session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
-        state = _get_admin_utils_state(session)
-        state["awaiting_faq_action"] = None
-        await _save_admin_utils_state(container, session, state)
-        await message.answer(
-            "📚 Управление FAQ.\n"
-            "Команды: «FAQ Добавить», «FAQ Ред. заголовок», «FAQ Ред. текст», "
-            "«FAQ Медиа», «FAQ Очистить медиа», «FAQ Показать root».",
-        )
-
-    @router.message(F.text == "FAQ Добавить")
-    async def faq_add_prompt(message: Message) -> None:
-        if not await _ensure_admin(message):
-            return
-        if not message.from_user:
-            return
-        session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
-        state = _get_admin_utils_state(session)
-        _reset_admin_utils_waiters(state)
-        state["awaiting_faq_action"] = "add"
-        await _save_admin_utils_state(container, session, state)
-        await message.answer("Формат: root|&lt;parent_id&gt; | &lt;название&gt;")
-
-    @router.message(F.text == "FAQ Ред. заголовок")
-    async def faq_title_prompt(message: Message) -> None:
-        if not await _ensure_admin(message):
-            return
-        if not message.from_user:
-            return
-        session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
-        state = _get_admin_utils_state(session)
-        _reset_admin_utils_waiters(state)
-        state["awaiting_faq_action"] = "title"
-        await _save_admin_utils_state(container, session, state)
-        await message.answer("Формат: &lt;id&gt; | &lt;новый заголовок&gt;")
-
-    @router.message(F.text == "FAQ Ред. текст")
-    async def faq_text_prompt(message: Message) -> None:
-        if not await _ensure_admin(message):
-            return
-        if not message.from_user:
-            return
-        session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
-        state = _get_admin_utils_state(session)
-        _reset_admin_utils_waiters(state)
-        state["awaiting_faq_action"] = "text"
-        await _save_admin_utils_state(container, session, state)
-        await message.answer("Формат: &lt;id&gt; | &lt;новый текст&gt;")
-
-    @router.message(F.text == "FAQ Показать root")
-    async def faq_show_root_button(message: Message) -> None:
-        if not await _ensure_admin(message):
-            return
-        items = await container.faq_service.list_children(None)
-        if not items:
-            await message.answer("FAQ root\nПодразделов нет.")
-            return
-        rows = [f"{item.id}. {item.title}" for item in items]
-        await message.answer("FAQ root\n" + "\n".join(rows))
-
-    @router.message(F.text == "FAQ Медиа")
-    async def faq_media_help_button(message: Message) -> None:
-        if not await _ensure_admin(message):
-            return
-        await message.answer("Формат: faq media &lt;id раздела&gt;")
-
-    @router.message(F.text == "FAQ Очистить медиа")
-    async def faq_media_clear_help_button(message: Message) -> None:
-        if not await _ensure_admin(message):
-            return
-        await message.answer("Формат: faq media clear &lt;id раздела&gt;")
-
     @router.message(F.text == "Добавить админа")
     async def add_admin_help(message: Message) -> None:
         if not await _ensure_admin(message):
@@ -1735,108 +1657,6 @@ def build_admin_router(container: AppContainer) -> Router:
                 )
             except Exception:
                 pass
-
-    @router.message(F.text.regexp(r"^faq\s+show\s+(root|\d+)$"))
-    async def faq_show(message: Message) -> None:
-        if not await _ensure_admin(message):
-            return
-        if not message.text:
-            return
-        raw = message.text.split()[-1]
-        parent_id = None if raw == "root" else int(raw)
-        items = await container.faq_service.list_children(parent_id)
-        if parent_id is None:
-            title = "FAQ root"
-        else:
-            section = await container.faq_service.get_section(parent_id)
-            title = f"FAQ раздел {parent_id}: {section.title if section else 'не найден'}"
-        if not items:
-            await message.answer(f"{title}\nПодразделов нет.")
-            return
-        rows = [f"{item.id}. {item.title}" for item in items]
-        await message.answer(f"{title}\n" + "\n".join(rows))
-
-    @router.message(F.text.regexp(r"^faq\s+add\s+(root|\d+)\s*\|\s*.+$"))
-    async def faq_add(message: Message) -> None:
-        if not await _ensure_admin(message):
-            return
-        if not message.text:
-            return
-        payload = message.text[len("faq add ") :].strip()
-        parent_raw, title = [part.strip() for part in payload.split("|", maxsplit=1)]
-        parent_id = None if parent_raw == "root" else int(parent_raw)
-        section = await container.faq_service.create_section(parent_id=parent_id, title=title)
-        await message.answer(f"Раздел создан: {section.id} — {section.title}")
-
-    @router.message(F.text.regexp(r"^faq\s+title\s+\d+\s*\|\s*.+$"))
-    async def faq_title(message: Message) -> None:
-        if not await _ensure_admin(message):
-            return
-        if not message.text:
-            return
-        payload = message.text[len("faq title ") :].strip()
-        section_id_raw, new_title = [part.strip() for part in payload.split("|", maxsplit=1)]
-        updated = await container.faq_service.update_section_title(int(section_id_raw), new_title)
-        if not updated:
-            await message.answer("Раздел не найден.")
-            return
-        await message.answer(f"Заголовок обновлен: {updated.id} — {updated.title}")
-
-    @router.message(F.text.regexp(r"^faq\s+text\s+\d+\s*\|\s*.+$"))
-    async def faq_text(message: Message) -> None:
-        if not await _ensure_admin(message):
-            return
-        if not message.text:
-            return
-        payload = message.text[len("faq text ") :].strip()
-        section_id_raw, content = [part.strip() for part in payload.split("|", maxsplit=1)]
-        updated = await container.faq_service.update_section_text(int(section_id_raw), content)
-        if not updated:
-            await message.answer("Раздел не найден.")
-            return
-        await message.answer(f"Текст обновлен для раздела {updated.id}.")
-
-    @router.message(F.text.regexp(r"^faq\s+media\s+\d+$"))
-    async def faq_media_start(message: Message) -> None:
-        if not await _ensure_admin(message):
-            return
-        if not message.from_user or not message.text:
-            return
-        section_id = int(message.text.split()[-1])
-        section = await container.faq_service.get_section(section_id)
-        if not section:
-            await message.answer("Раздел не найден.")
-            return
-        session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
-        utils_state = _get_admin_utils_state(session)
-        _reset_admin_utils_waiters(utils_state)
-        utils_state["awaiting_faq_media_section_id"] = section_id
-        await _save_admin_utils_state(container, session, utils_state)
-        await message.answer(
-            f"Режим медиа FAQ для раздела {section_id} ({section.title}).\n"
-            "Отправьте файлы. Для завершения: «Готово медиа».\n"
-            "Удаление по индексу: faq media del &lt;id&gt; &lt;index&gt;."
-        )
-
-    @router.message(F.text.regexp(r"^faq\s+media\s+clear\s+\d+$"))
-    async def faq_media_clear(message: Message) -> None:
-        if not await _ensure_admin(message):
-            return
-        if not message.text:
-            return
-        section_id = int(message.text.split()[-1])
-        await faq_media_store.clear_media(section_id)
-        await message.answer(f"FAQ медиа очищено для раздела {section_id}.")
-
-    @router.message(F.text.regexp(r"^faq\s+media\s+del\s+\d+\s+\d+$"))
-    async def faq_media_delete(message: Message) -> None:
-        if not await _ensure_admin(message):
-            return
-        if not message.text:
-            return
-        _, _, _, section_raw, index_raw = message.text.split()
-        ok = await faq_media_store.remove_media_at(int(section_raw), int(index_raw))
-        await message.answer("Удалено." if ok else "Неверный индекс.")
 
     @router.message(F.text.regexp(r"^код\s+\d+$"))
     async def admin_profile_by_code(message: Message) -> None:
@@ -1903,14 +1723,19 @@ def build_admin_router(container: AppContainer) -> Router:
             if menu_action == "faq":
                 session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, callback.from_user.id)
                 state = _get_admin_utils_state(session)
-                state["awaiting_faq_action"] = None
+                _reset_admin_utils_waiters(state)
                 await _save_admin_utils_state(container, session, state)
                 await callback.answer()
-                await callback.message.answer(
-                    "📚 Управление FAQ.\n"
-                    "Команды: «FAQ Добавить», «FAQ Ред. заголовок», «FAQ Ред. текст», "
-                    "«FAQ Медиа», «FAQ Очистить медиа», «FAQ Показать root».",
+                await open_faq_admin_panel(
+                    callback.message,
+                    container=container,
+                    codec=callback_codec,
+                    user_id=callback.from_user.id,
+                    utils_state=state,
+                    faq_media_store=faq_media_store,
+                    edit=False,
                 )
+                await _save_admin_utils_state(container, session, state)
                 return
             if menu_action == "admins":
                 is_main = callback.from_user.id == container.settings.telegram.main_admin_id
@@ -1949,6 +1774,21 @@ def build_admin_router(container: AppContainer) -> Router:
                 )
                 return
             await callback.answer()
+            return
+
+        if action.startswith("admin:faq:"):
+            session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, callback.from_user.id)
+            utils_state = _get_admin_utils_state(session)
+            handled = await handle_faq_admin_callback(
+                callback,
+                action=action,
+                container=container,
+                codec=callback_codec,
+                faq_media_store=faq_media_store,
+                utils_state=utils_state,
+            )
+            if handled:
+                await _save_admin_utils_state(container, session, utils_state)
             return
 
         if action.startswith("admin:utils:"):
@@ -3969,18 +3809,6 @@ def _content_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
-def _faq_admin_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="FAQ Добавить"), KeyboardButton(text="FAQ Ред. заголовок")],
-            [KeyboardButton(text="FAQ Ред. текст"), KeyboardButton(text="FAQ Показать root")],
-            [KeyboardButton(text="FAQ Медиа"), KeyboardButton(text="FAQ Очистить медиа")],
-            [KeyboardButton(text="Админ"), KeyboardButton(text="Назад")],
-        ],
-        resize_keyboard=True,
-    )
-
-
 def _orders_root_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -4150,10 +3978,35 @@ def _get_admin_utils_state(session) -> dict:
             "block_operation": str(block.get("block_operation")) if block.get("block_operation") else None,
             "awaiting_codes_add": bool(block.get("awaiting_codes_add")),
             "awaiting_codes_remove": bool(block.get("awaiting_codes_remove")),
-            "awaiting_faq_action": str(block.get("awaiting_faq_action")) if block.get("awaiting_faq_action") else None,
             "awaiting_faq_media_section_id": (
                 int(block.get("awaiting_faq_media_section_id"))
                 if block.get("awaiting_faq_media_section_id")
+                else None
+            ),
+            "faq_admin_screen": str(block.get("faq_admin_screen")) if block.get("faq_admin_screen") else None,
+            "faq_admin_nav_section_id": (
+                int(block.get("faq_admin_nav_section_id"))
+                if block.get("faq_admin_nav_section_id") is not None
+                else None
+            ),
+            "faq_admin_pick_nav_section_id": (
+                int(block.get("faq_admin_pick_nav_section_id"))
+                if block.get("faq_admin_pick_nav_section_id") is not None
+                else None
+            ),
+            "faq_admin_target_section_id": (
+                int(block.get("faq_admin_target_section_id"))
+                if block.get("faq_admin_target_section_id") is not None
+                else None
+            ),
+            "faq_admin_panel_chat_id": (
+                int(block.get("faq_admin_panel_chat_id"))
+                if block.get("faq_admin_panel_chat_id")
+                else None
+            ),
+            "faq_admin_panel_message_id": (
+                int(block.get("faq_admin_panel_message_id"))
+                if block.get("faq_admin_panel_message_id")
                 else None
             ),
             "awaiting_admin_add_id": bool(block.get("awaiting_admin_add_id")),
@@ -4189,8 +4042,13 @@ def _get_admin_utils_state(session) -> dict:
         "block_operation": None,
         "awaiting_codes_add": False,
         "awaiting_codes_remove": False,
-        "awaiting_faq_action": None,
         "awaiting_faq_media_section_id": None,
+        "faq_admin_screen": None,
+        "faq_admin_nav_section_id": None,
+        "faq_admin_pick_nav_section_id": None,
+        "faq_admin_target_section_id": None,
+        "faq_admin_panel_chat_id": None,
+        "faq_admin_panel_message_id": None,
         "awaiting_admin_add_id": False,
         "awaiting_admin_add_code": False,
         "awaiting_block_reason_for_code": None,
@@ -4220,8 +4078,13 @@ async def _save_admin_utils_state(container: AppContainer, session, state: dict)
         "block_operation": state.get("block_operation"),
         "awaiting_codes_add": bool(state.get("awaiting_codes_add")),
         "awaiting_codes_remove": bool(state.get("awaiting_codes_remove")),
-        "awaiting_faq_action": state.get("awaiting_faq_action"),
         "awaiting_faq_media_section_id": state.get("awaiting_faq_media_section_id"),
+        "faq_admin_screen": state.get("faq_admin_screen"),
+        "faq_admin_nav_section_id": state.get("faq_admin_nav_section_id"),
+        "faq_admin_pick_nav_section_id": state.get("faq_admin_pick_nav_section_id"),
+        "faq_admin_target_section_id": state.get("faq_admin_target_section_id"),
+        "faq_admin_panel_chat_id": state.get("faq_admin_panel_chat_id"),
+        "faq_admin_panel_message_id": state.get("faq_admin_panel_message_id"),
         "awaiting_admin_add_id": bool(state.get("awaiting_admin_add_id")),
         "awaiting_admin_add_code": bool(state.get("awaiting_admin_add_code")),
         "awaiting_block_reason_for_code": state.get("awaiting_block_reason_for_code"),
@@ -4303,8 +4166,7 @@ def _reset_admin_utils_waiters(state: dict) -> None:
     state["profile_search_mode"] = None
     state["block_search_mode"] = None
     state["block_operation"] = None
-    state["awaiting_faq_action"] = None
-    state["awaiting_faq_media_section_id"] = None
+    reset_faq_admin_state(state)
     state["awaiting_block_reason_for_code"] = None
     state["awaiting_profile_comment_code"] = None
     state["awaiting_profile_edit_code"] = None
