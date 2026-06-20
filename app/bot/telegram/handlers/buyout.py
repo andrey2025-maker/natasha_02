@@ -11,6 +11,7 @@ from aiogram.exceptions import TelegramForbiddenError
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
+from app.bot.telegram.callback_panel import edit_content_with_media, edit_panel_message
 from app.bot.telegram.keyboards.profile import (
     buyout_add_more_inline_keyboard,
     main_menu_keyboard,
@@ -238,16 +239,24 @@ def build_buyout_router(container: AppContainer) -> Router:
                 await callback.message.edit_reply_markup(reply_markup=None)
             except Exception:
                 pass
-            kwargs = {"parse_mode": "HTML"}
             if response.state == DialogState.BUYOUT_ADD_MORE:
-                kwargs["reply_markup"] = buyout_add_more_inline_keyboard(
-                    user_id=callback.from_user.id,
-                    codec=callback_codec,
+                await edit_panel_message(
+                    callback.message,
+                    text=response.text,
+                    reply_markup=buyout_add_more_inline_keyboard(
+                        user_id=callback.from_user.id,
+                        codec=callback_codec,
+                    ),
                 )
             elif response.state == DialogState.IDLE:
                 is_admin = await container.admin_service.is_admin(callback.from_user.id)
-                kwargs["reply_markup"] = main_menu_keyboard(include_admin=is_admin)
-            await callback.message.answer(response.text, **kwargs)
+                await edit_panel_message(
+                    callback.message,
+                    text=response.text,
+                    reply_markup=main_menu_keyboard(include_admin=is_admin),
+                )
+            else:
+                await edit_panel_message(callback.message, text=response.text)
             return
         if action.startswith("buydraft:"):
             if not await container.admin_service.is_admin(callback.from_user.id):
@@ -461,14 +470,12 @@ def build_buyout_router(container: AppContainer) -> Router:
                 elif manager_comment:
                     pay_text += f"\n\nКомментарий: {_h(manager_comment)}"
                 await callback.answer("Подтверждено")
-                await callback.message.edit_text(
-                    f"Вы подтвердили цену по заказу <b>{_h(order_number)}</b>.",
-                    parse_mode="HTML",
-                    reply_markup=None,
+                await edit_content_with_media(
+                    callback.message,
+                    text=pay_text,
+                    media_items=payment_media_items,
+                    reply_markup=pay_keyboard,
                 )
-                await callback.message.answer(pay_text, parse_mode="HTML", reply_markup=pay_keyboard)
-                for payment_media in payment_media_items:
-                    await send_stored_media_to_telegram(callback.bot, callback.from_user.id, payment_media)
                 return
             if quote_action == "cancel":
                 updated = await container.order_admin_service.set_status(
@@ -521,10 +528,12 @@ def build_buyout_router(container: AppContainer) -> Router:
                         1,
                     )
                 await callback.answer()
-                await callback.message.edit_reply_markup(reply_markup=None)
-                await callback.message.answer(pay_text, parse_mode="HTML", reply_markup=keyboard)
-                for payment_media in payment_media_items:
-                    await send_stored_media_to_telegram(callback.bot, callback.from_user.id, payment_media)
+                await edit_content_with_media(
+                    callback.message,
+                    text=pay_text,
+                    media_items=payment_media_items,
+                    reply_markup=keyboard,
+                )
                 return
             await callback.answer("Неизвестное действие", show_alert=True)
             return
@@ -641,10 +650,9 @@ def build_buyout_router(container: AppContainer) -> Router:
                     await callback.answer("Не удалось обновить", show_alert=True)
                     return
                 await callback.answer("Платеж отправлен на проверку")
-                await callback.message.edit_reply_markup(reply_markup=None)
-                await callback.message.answer(
-                    "Платёж будет проверен. После проверки будет заказан товар.",
-                    parse_mode="HTML",
+                await edit_panel_message(
+                    callback.message,
+                    text="Платёж будет проверен. После проверки будет заказан товар.",
                 )
                 await _post_payment_check_to_group(
                     callback,
@@ -670,10 +678,9 @@ def build_buyout_router(container: AppContainer) -> Router:
                     await callback.answer("Не удалось обновить", show_alert=True)
                     return
                 await callback.answer("Заказ отменен")
-                await callback.message.edit_reply_markup(reply_markup=None)
-                await callback.message.answer(
-                    f"Заявка <b>{order_number}</b> отменена.",
-                    parse_mode="HTML",
+                await edit_panel_message(
+                    callback.message,
+                    text=f"Заявка <b>{order_number}</b> отменена.",
                 )
                 await _notify_payment_group_event(
                     callback,

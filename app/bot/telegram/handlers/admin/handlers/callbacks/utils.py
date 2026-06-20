@@ -17,6 +17,7 @@ from aiogram.types import (
 )
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
+from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.fsm_utils import (
     admin_utils_has_waiter,
     fsm_prompt,
@@ -105,7 +106,7 @@ def register_utils_callbacks(router: Router, ctx: AdminContext) -> None:
                     return
             if utils_action == "root":
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     "🧰 Утилиты админки.\nВыберите подраздел:",
                     reply_markup=_utils_inline_keyboard(callback.from_user.id, callback_codec),
                 )
@@ -117,7 +118,7 @@ def register_utils_callbacks(router: Router, ctx: AdminContext) -> None:
                 _, buyout_topic_id = await group_topics_store.get_tg_topic("buyout")
                 vk_logs_peer_id = await group_topics_store.get_vk_logs_peer_id()
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     "🛰 Группа (темы диалогов):\n"
                     f"chat_id={target_chat_id or 'не задан'}, logs={target_topic_id or '—'}, "
                     f"payment={payment_topic_id or '—'}, questions={questions_topic_id or '—'}, "
@@ -133,12 +134,12 @@ def register_utils_callbacks(router: Router, ctx: AdminContext) -> None:
                 state["awaiting_backup_target"] = True
                 await _save_admin_utils_state(container, session, state)
                 await callback.answer()
-                await callback.message.answer(fsm_prompt("Отправьте chat_id группы, например: -1001234567890"))
+                await edit_panel_message(callback.message, text=fsm_prompt("Отправьте chat_id группы, например: -1001234567890"))
                 return
             if utils_action == "group:notifications":
                 settings = await notification_settings_store.get_settings()
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     _notification_settings_text(settings),
                     reply_markup=_notifications_keyboard_with_back(callback.from_user.id, callback_codec, settings),
                 )
@@ -146,7 +147,7 @@ def register_utils_callbacks(router: Router, ctx: AdminContext) -> None:
             if utils_action == "group:topics":
                 selected = await group_topics_store.get_topic_name_parts()
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     "Шаблон подписи темы для новых диалогов.\n"
                     "Выбранные поля отмечены зеленым.",
                     reply_markup=_utils_topics_keyboard(callback.from_user.id, callback_codec, selected),
@@ -162,7 +163,7 @@ def register_utils_callbacks(router: Router, ctx: AdminContext) -> None:
                 return
             if utils_action == "ref":
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     "Хозяйка Наталья🐢, Повелительница Китайчиков я бы с радостью награждал друзей, "
                     "но ты пока не придумала условия реферальной системы. "
                     "Давай сделаем это вместе - я подскажу, если что! Напиши если созреешь @andreyhggh",
@@ -172,7 +173,7 @@ def register_utils_callbacks(router: Router, ctx: AdminContext) -> None:
             if utils_action == "backups":
                 enabled = await backup_service.auto_backup_enabled()
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     "🗂 Бэкапы: выгрузка БД/Excel и авто-бэкап каждые 4 часа.",
                     reply_markup=_backup_keyboard_with_back(callback.from_user.id, callback_codec, enabled),
                 )
@@ -186,7 +187,7 @@ def register_utils_callbacks(router: Router, ctx: AdminContext) -> None:
                 admin_ids = await container.admin_service.list_admins()
                 lines = [f"- {admin_id}" for admin_id in admin_ids]
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     "Админы:\n" + "\n".join(lines),
                     reply_markup=_admins_access_keyboard_with_back(
                         user_id=callback.from_user.id,
@@ -204,7 +205,7 @@ def register_utils_callbacks(router: Router, ctx: AdminContext) -> None:
                 if len(reserved) > 40:
                     preview += ", ..."
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     "🔐 Резерв кодов:\n"
                     f"{preview}",
                     reply_markup=_codes_inline_keyboard(callback.from_user.id, callback_codec),
@@ -217,7 +218,7 @@ def register_utils_callbacks(router: Router, ctx: AdminContext) -> None:
                 state["awaiting_codes_add"] = True
                 await _save_admin_utils_state(container, session, state)
                 await callback.answer()
-                await callback.message.answer("Отправьте коды для добавления (через запятую или по строкам).")
+                await edit_panel_message(callback.message, text="Отправьте коды для добавления (через запятую или по строкам).")
                 return
             if utils_action == "codes:remove":
                 session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, callback.from_user.id)
@@ -226,13 +227,13 @@ def register_utils_callbacks(router: Router, ctx: AdminContext) -> None:
                 state["awaiting_codes_remove"] = True
                 await _save_admin_utils_state(container, session, state)
                 await callback.answer()
-                await callback.message.answer("Отправьте коды для удаления (через запятую или по строкам).")
+                await edit_panel_message(callback.message, text="Отправьте коды для удаления (через запятую или по строкам).")
                 return
             if utils_action == "payment":
                 text = await payment_store.get_text()
                 media_items = await payment_store.get_media_items()
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     "💸 Контент оплаты для пользователей:\n\n"
                     f"{text}\n\n"
                     f"Медиа: {len(media_items)}\n{_media_items_summary(media_items)}",
@@ -247,7 +248,7 @@ def register_utils_callbacks(router: Router, ctx: AdminContext) -> None:
                 state["awaiting_payment_media"] = True
                 await _save_admin_utils_state(container, session, state)
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     "Режим редактирования оплаты.\n"
                     "1) Отправьте новый текст.\n"
                     "2) Затем отправляйте медиа.\n"

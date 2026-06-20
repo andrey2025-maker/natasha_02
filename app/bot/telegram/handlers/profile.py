@@ -6,6 +6,7 @@ from aiogram.exceptions import TelegramForbiddenError
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
+from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.keyboards.main_menu import my_orders_message_keyboard
 from app.bot.telegram.keyboards.profile import platforms_keyboard, profile_menu_keyboard
 from app.bot.texts import messages as msg
@@ -53,7 +54,7 @@ def build_profile_router(container: AppContainer) -> Router:
     topic_dialog_store = TopicDialogStore(container.settings.database.dsn)
     questions_alert_store = QuestionsAlertStore(container.settings.database.dsn)
 
-    async def _apply_response(message: Message, response: object) -> None:
+    async def _apply_response(message: Message, response: object, *, edit: bool = False) -> None:
         outbound_messages = getattr(response, "outbound_messages", None)
         if isinstance(outbound_messages, list) and outbound_messages:
             await _dispatch_outbound(message, outbound_messages)
@@ -71,11 +72,18 @@ def build_profile_router(container: AppContainer) -> Router:
                     notification_settings_store=notification_settings_store,
                 )
             return
-        kwargs = {"parse_mode": "HTML"}
         reply_markup = getattr(response, "reply_markup", None)
-        if reply_markup is not None:
-            kwargs["reply_markup"] = reply_markup
-        await message.answer(text, **kwargs)
+        if edit:
+            await edit_panel_message(
+                message,
+                text=text,
+                reply_markup=reply_markup,
+            )
+        else:
+            kwargs = {"parse_mode": "HTML"}
+            if reply_markup is not None:
+                kwargs["reply_markup"] = reply_markup
+            await message.answer(text, **kwargs)
         profile = getattr(response, "profile", None)
         if profile is not None and getattr(profile, "telegram_user_id", None):
             await refresh_dialog_topic_profile(
@@ -237,11 +245,11 @@ def build_profile_router(container: AppContainer) -> Router:
                     profile=profile,
                 )
                 await callback.answer("Профиль уже заполнен.")
-                await _apply_response(callback.message, response)
+                await _apply_response(callback.message, response, edit=True)
                 return
             response = await container.profile_flow.start_fill(session)
             await callback.answer()
-            await _apply_response(callback.message, response)
+            await _apply_response(callback.message, response, edit=True)
             return
         if action == "profile:start_sync":
             profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
@@ -254,16 +262,16 @@ def build_profile_router(container: AppContainer) -> Router:
                     profile=profile,
                 )
                 await callback.answer("Профиль уже заполнен.")
-                await _apply_response(callback.message, response)
+                await _apply_response(callback.message, response, edit=True)
                 return
             response = await container.profile_flow.start_sync_with_other_platform(session)
             await callback.answer()
-            await _apply_response(callback.message, response)
+            await _apply_response(callback.message, response, edit=True)
             return
         if action == "profile:buyout_start":
             response = await container.buyout_flow.start(session)
             await callback.answer()
-            await _apply_response(callback.message, response)
+            await _apply_response(callback.message, response, edit=True)
             return
         if action == "profile:buyout_orders":
             await container.buyout_flow.prepare_preferences(session)
@@ -278,7 +286,7 @@ def build_profile_router(container: AppContainer) -> Router:
                     codec=callback_codec,
                 )
             await callback.answer()
-            await _apply_response(callback.message, response)
+            await _apply_response(callback.message, response, edit=True)
             return
         if action == "profile:buyout_filters":
             await container.buyout_flow.prepare_preferences(session)
@@ -293,13 +301,13 @@ def build_profile_router(container: AppContainer) -> Router:
                     codec=callback_codec,
                 )
             await callback.answer()
-            await _apply_response(callback.message, response)
+            await _apply_response(callback.message, response, edit=True)
             return
         response = await container.profile_flow.handle_callback(session, action, callback_codec)
         if action in {"passport_yes", "passport_no"}:
             response.reply_markup = platforms_keyboard(callback.from_user.id, callback_codec)
         await callback.answer()
-        await _apply_response(callback.message, response)
+        await _apply_response(callback.message, response, edit=True)
 
     @router.message(F.photo | F.video | F.animation | F.document)
     async def profile_idle_media_flow(message: Message) -> None:

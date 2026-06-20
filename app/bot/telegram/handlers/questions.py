@@ -5,10 +5,10 @@ from html import escape
 from aiogram import F, Router
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.exceptions import TelegramForbiddenError
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
+from app.bot.telegram.callbacks import CallbackCodec
+from app.bot.telegram.callback_panel import edit_content_with_media, edit_panel_message
 from app.core.container import AppContainer
 from app.domain.enums import Platform
 from app.services.admin_tools_service import (
@@ -17,7 +17,7 @@ from app.services.admin_tools_service import (
     QuestionsAlertStore,
     StaticContentStore,
     TopicDialogStore,
-    send_stored_media_to_telegram,
+    send_content_with_media_to_telegram,
 )
 from app.bot.telegram.handlers.questions_topic import handle_questions_process_callback
 
@@ -51,11 +51,7 @@ def build_questions_router(container: AppContainer) -> Router:
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        text = await prohibited_store.get_text()
-        media_items = await prohibited_store.get_media_items()
-        await message.answer(text, parse_mode="HTML")
-        for media in media_items:
-            await send_stored_media_to_telegram(message.bot, message.chat.id, media)
+        await _send_static_content(message, prohibited_store)
 
     @router.message(F.chat.type == "private", F.text.in_({"Как работает доставка", "🚚 Как работает доставка"}))
     async def delivery_info(message: Message) -> None:
@@ -245,23 +241,38 @@ async def _send_section(
     )
     text = "\n".join(body_lines)
 
-    if edit:
-        try:
-            await message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
-        except TelegramBadRequest as exc:
-            error_text = str(exc).lower()
-            if "message is not modified" in error_text:
-                return
-            if "can't be edited" in error_text or "message to edit not found" in error_text:
-                await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
-                return
-            raise
-    else:
-        await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+    media_items: list[dict] = []
     if section_id is not None:
         media_items = await faq_media_store.get_media_items(section_id)
-        for media in media_items:
-            await send_stored_media_to_telegram(message.bot, message.chat.id, media)
+
+    if media_items:
+        await edit_content_with_media(
+            message,
+            text=text,
+            media_items=media_items,
+            reply_markup=keyboard,
+        )
+        return
+
+    if edit:
+        await edit_panel_message(
+            message,
+            text=text,
+            reply_markup=keyboard,
+        )
+        return
+
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+
+async def _send_static_content(message: Message, store: StaticContentStore) -> None:
+    text = await store.get_text()
+    media_items = await store.get_media_items()
+    await send_content_with_media_to_telegram(
+        message,
+        text=text,
+        media_items=media_items,
+    )
 
 
 def _faq_keyboard(
@@ -301,14 +312,6 @@ def _faq_keyboard(
     if not rows:
         rows = [[InlineKeyboardButton(text="🏠 К разделам", callback_data=codec.encode("faq:root", user_id))]]
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-async def _send_static_content(message: Message, store: StaticContentStore) -> None:
-    text = await store.get_text()
-    media_items = await store.get_media_items()
-    await message.answer(text, parse_mode="HTML")
-    for media in media_items:
-        await send_stored_media_to_telegram(message.bot, message.chat.id, media)
 
 
 async def _relay_topic_reply_to_user(

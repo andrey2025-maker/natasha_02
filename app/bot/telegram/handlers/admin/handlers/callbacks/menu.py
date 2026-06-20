@@ -17,6 +17,7 @@ from aiogram.types import (
 )
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
+from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.fsm_utils import (
     admin_utils_has_waiter,
     fsm_prompt,
@@ -92,11 +93,12 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
                     page=1,
                     container=container,
                     codec=callback_codec,
+                    edit=True,
                 )
                 return
             if menu_action == "blocks":
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     "Управление блокировками:",
                     reply_markup=_blocks_menu_keyboard(callback.from_user.id, callback_codec),
                 )
@@ -107,12 +109,12 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
                 state["page"] = 1
                 await _save_admin_orders_state(container, session, state)
                 await callback.answer()
-                await _send_orders_panel(callback.message, container, callback_codec, callback.from_user.id, state)
+                await _send_orders_panel(callback.message, container, callback_codec, callback.from_user.id, state, edit=True)
                 return
             if menu_action == "stats":
                 text = await container.stats_service.build_overview_text()
                 await callback.answer()
-                await callback.message.answer(text, parse_mode="HTML")
+                await edit_panel_message(callback.message, text=text, parse_mode="HTML")
                 return
             if menu_action == "faq":
                 session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, callback.from_user.id)
@@ -127,7 +129,7 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
                     user_id=callback.from_user.id,
                     utils_state=state,
                     faq_media_store=faq_media_store,
-                    edit=False,
+                    edit=True,
                 )
                 await _save_admin_utils_state(container, session, state)
                 return
@@ -140,7 +142,7 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
                 admin_ids = await container.admin_service.list_admins()
                 lines = [f"- {admin_id}" for admin_id in admin_ids]
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     "Админы:\n" + "\n".join(lines),
                     reply_markup=_admins_access_keyboard(
                         user_id=callback.from_user.id,
@@ -154,14 +156,14 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
                 return
             if menu_action == "broadcast":
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     "Выберите аудиторию для рассылки, затем отправьте текст или одно медиа с подписью.",
                     reply_markup=_broadcast_keyboard(callback.from_user.id, callback_codec),
                 )
                 return
             if menu_action == "utils":
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     "🧰 Утилиты админки.\n"
                     "Выберите подраздел:",
                     reply_markup=_utils_inline_keyboard(callback.from_user.id, callback_codec),

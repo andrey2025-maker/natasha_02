@@ -17,6 +17,7 @@ from aiogram.types import (
 )
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
+from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.fsm_utils import (
     admin_utils_has_waiter,
     fsm_prompt,
@@ -164,7 +165,7 @@ def register_orders_callbacks(router: Router, ctx: AdminContext) -> None:
                 await callback.answer()
                 order = await container.order_admin_service.get_order(str(state.get("edit_order")))
                 current_value = _order_field_value(order, field) if order else "—"
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     f"Введите новое значение для поля: {_field_title(field)}\n"
                     f"Текущее: <code>{_h(current_value)}</code>",
                     parse_mode="HTML",
@@ -227,7 +228,7 @@ def register_orders_callbacks(router: Router, ctx: AdminContext) -> None:
                 state["edit_order"] = None
                 await _save_admin_orders_state(container, session, state)
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     f"Введите новое значение для поля `{_field_title(field)}`. "
                     f"Будет применено к {len(selected)} заказам.",
                     parse_mode="Markdown",

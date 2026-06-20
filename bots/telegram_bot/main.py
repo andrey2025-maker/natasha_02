@@ -10,8 +10,8 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+
+from app.bot.telegram.defaults import TELEGRAM_BOT_DEFAULTS
 
 from app.bootstrap import build_container_from_env
 from app.bot.telegram.handlers.admin import build_admin_router
@@ -39,7 +39,7 @@ async def run() -> None:
     container = await build_container_from_env()
     bot = Bot(
         token=container.settings.telegram.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        default=TELEGRAM_BOT_DEFAULTS,
     )
     dispatcher = Dispatcher()
     dispatcher.include_router(build_start_router(container))

@@ -3,6 +3,7 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.bot.telegram.callbacks import CallbackCodec
+from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.handlers.admin.html import _h
 from app.core.container import AppContainer
 from app.domain.models import UserProfile
@@ -14,6 +15,7 @@ async def _send_profiles_page(
     page: int,
     container: AppContainer,
     codec: CallbackCodec,
+    edit: bool = False,
 ) -> None:
     safe_page = max(1, page)
     items = await container.admin_service.list_profiles(page=safe_page, page_size=9)
@@ -21,13 +23,21 @@ async def _send_profiles_page(
         safe_page -= 1
         items = await container.admin_service.list_profiles(page=safe_page, page_size=9)
     if not items:
-        await message.answer("Профилей пока нет.")
+        text = "Профилей пока нет."
+        if edit:
+            await edit_panel_message(message, text=text)
+        else:
+            await message.answer(text)
         return
     lines = ["Профили:"]
     for idx, p in enumerate(items, start=1 + (safe_page - 1) * 9):
         lines.append(_profile_list_item_text(idx, p))
     text = "\n\n".join(lines)
-    await message.answer(text, parse_mode="HTML", reply_markup=_profiles_pagination(user_id, safe_page, codec, items))
+    keyboard = _profiles_pagination(user_id, safe_page, codec, items)
+    if edit:
+        await edit_panel_message(message, text=text, parse_mode="HTML", reply_markup=keyboard)
+    else:
+        await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 def _profiles_pagination(user_id: int, page: int, codec: CallbackCodec, items: list[UserProfile]):

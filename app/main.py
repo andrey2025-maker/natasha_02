@@ -4,8 +4,8 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+
+from app.bot.telegram.defaults import TELEGRAM_BOT_DEFAULTS
 
 from app.bot.vk.app import run_vk_bot, run_vk_outbox_worker
 from app.bot.telegram.handlers.buyout import build_buyout_router
@@ -34,7 +34,7 @@ async def run_telegram_bot() -> None:
 
     bot = Bot(
         token=container.settings.telegram.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        default=TELEGRAM_BOT_DEFAULTS,
     )
     backup_service = BackupService(
         database_dsn=container.settings.database.dsn,

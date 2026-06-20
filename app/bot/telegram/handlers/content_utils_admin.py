@@ -4,6 +4,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.bot.telegram.callbacks import CallbackCodec
+from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.message_html import extract_message_html
 from app.services.admin_tools_service import ProhibitedGoodsStore, StaticContentStore
 
@@ -118,6 +119,13 @@ async def refresh_content_utils_panel(
             error_text = str(exc).lower()
             if "message is not modified" in error_text:
                 return
+            if int(panel_message_id) == int(message.message_id):
+                await edit_panel_message(
+                    message,
+                    text=text,
+                    reply_markup=keyboard,
+                )
+                return
     sent = await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
     utils_state["content_utils_panel_chat_id"] = int(sent.chat.id)
     utils_state["content_utils_panel_message_id"] = int(sent.message_id)
@@ -153,6 +161,7 @@ async def handle_content_utils_callback(
         utils_state["content_utils_kind"] = kind
         utils_state["content_utils_screen"] = SCREEN_VIEW
         utils_state["content_utils_panel_chat_id"] = int(callback.message.chat.id)
+        utils_state["content_utils_panel_message_id"] = int(callback.message.message_id)
         await callback.answer()
         await refresh_content_utils_panel(
             message=callback.message,
@@ -161,7 +170,7 @@ async def handle_content_utils_callback(
             utils_state=utils_state,
             prohibited_store=prohibited_store,
             contacts_store=contacts_store,
-            force_new=True,
+            force_new=False,
         )
         return True
 
@@ -332,8 +341,9 @@ async def _handle_back(
     await callback.answer()
     from app.bot.telegram.handlers.admin.keyboards import _utils_inline_keyboard
 
-    await callback.message.answer(
-        "🧰 Утилиты админки.\nВыберите подраздел:",
+    await edit_panel_message(
+        callback.message,
+        text="🧰 Утилиты админки.\nВыберите подраздел:",
         reply_markup=_utils_inline_keyboard(user_id, codec),
     )
 

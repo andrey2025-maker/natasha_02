@@ -17,6 +17,7 @@ from aiogram.types import (
 )
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
+from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.fsm_utils import (
     admin_utils_has_waiter,
     fsm_prompt,
@@ -93,11 +94,12 @@ def register_profiles_callbacks(router: Router, ctx: AdminContext) -> None:
                     page=page,
                     container=container,
                     codec=callback_codec,
+                    edit=True,
                 )
                 return
             if payload == "search_menu":
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     "Выберите, по чему искать профиль:",
                     reply_markup=_profiles_search_mode_keyboard(callback.from_user.id, callback_codec),
                 )
@@ -114,7 +116,7 @@ def register_profiles_callbacks(router: Router, ctx: AdminContext) -> None:
                 await _save_admin_utils_state(container, session, utils_state)
                 mode_title = {"code": "Код", "name": "Имя", "id": "ID", "tag": "Тэг"}[mode]
                 await callback.answer()
-                await callback.message.answer(f"Введите запрос для поиска по полю «{mode_title}».")
+                await edit_panel_message(callback.message, text=f"Введите запрос для поиска по полю «{mode_title}».")
                 return
 
         if action.startswith("admin:blocks:"):
@@ -125,24 +127,24 @@ def register_profiles_callbacks(router: Router, ctx: AdminContext) -> None:
                 reasons = await block_reason_store.list_reasons()
                 await callback.answer()
                 if not blocked:
-                    await callback.message.answer("Заблокированных админом пока нет.")
+                    await edit_panel_message(callback.message, text="Заблокированных админом пока нет.")
                 else:
                     text, markup = _render_blocked_page(callback.from_user.id, callback_codec, blocked, page, reasons)
-                    await callback.message.answer(text, reply_markup=markup)
+                    await edit_panel_message(callback.message, text=text, reply_markup=markup)
                 return
             if payload.startswith("show_unsubscribed"):
                 page = _parse_blocks_page(payload, default=1)
                 unsubscribed = await _collect_profiles(container, predicate=lambda item: item.blocked_bot, limit=500)
                 await callback.answer()
                 if not unsubscribed:
-                    await callback.message.answer("Отписанных (заблокировали бота) пока нет.")
+                    await edit_panel_message(callback.message, text="Отписанных (заблокировали бота) пока нет.")
                 else:
                     text, markup = _render_unsubscribed_page(callback.from_user.id, callback_codec, unsubscribed, page)
-                    await callback.message.answer(text, reply_markup=markup)
+                    await edit_panel_message(callback.message, text=text, reply_markup=markup)
                 return
             if payload == "start_block":
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     "Выберите поле для поиска профиля, которого нужно заблокировать:",
                     reply_markup=_block_search_mode_keyboard(callback.from_user.id, callback_codec),
                 )
@@ -151,9 +153,9 @@ def register_profiles_callbacks(router: Router, ctx: AdminContext) -> None:
                 blocked = await _collect_profiles(container, predicate=lambda item: item.is_blocked_by_admin, limit=90)
                 await callback.answer()
                 if not blocked:
-                    await callback.message.answer("Заблокированных админом пока нет.")
+                    await edit_panel_message(callback.message, text="Заблокированных админом пока нет.")
                     return
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     "Выберите профиль для разблокировки:",
                     reply_markup=_block_pick_keyboard(
                         callback.from_user.id,
@@ -176,7 +178,7 @@ def register_profiles_callbacks(router: Router, ctx: AdminContext) -> None:
                 await _save_admin_utils_state(container, session, utils_state)
                 mode_title = {"code": "Код", "name": "Имя", "id": "ID", "tag": "Тэг"}[mode]
                 await callback.answer()
-                await callback.message.answer(f"Введите запрос для блокировки (поле «{mode_title}»).")
+                await edit_panel_message(callback.message, text=f"Введите запрос для блокировки (поле «{mode_title}»).")
                 return
 
         if action.startswith("admin:blockpick:"):
@@ -191,7 +193,7 @@ def register_profiles_callbacks(router: Router, ctx: AdminContext) -> None:
                 utils_state["awaiting_block_reason_for_code"] = code
                 await _save_admin_utils_state(container, session, utils_state)
                 await callback.answer()
-                await callback.message.answer(
+                await edit_panel_message(callback.message, text=
                     f"Введите причину блокировки для кода {code}.\n"
                     "Если причина не нужна, отправьте `-`.",
                     parse_mode="Markdown",
@@ -212,7 +214,7 @@ def register_profiles_callbacks(router: Router, ctx: AdminContext) -> None:
             block_reason = await block_reason_store.get_reason(profile.code)
             profile_comment = await profile_comment_store.get_comment(profile.code)
             await callback.answer()
-            await callback.message.answer(
+            await edit_panel_message(callback.message, text=
                 _profile_details(profile, block_reason=block_reason, profile_comment=profile_comment),
                 parse_mode="HTML",
                 reply_markup=_profile_actions_keyboard(profile, callback.from_user.id, callback_codec),
@@ -226,7 +228,7 @@ def register_profiles_callbacks(router: Router, ctx: AdminContext) -> None:
                 await callback.answer("Профиль не найден", show_alert=True)
                 return
             await callback.answer()
-            await callback.message.answer(
+            await edit_panel_message(callback.message, text=
                 f"Что редактировать в профиле <b>{_h(code)}</b>?",
                 parse_mode="HTML",
                 reply_markup=_profile_edit_fields_keyboard(code, callback.from_user.id, callback_codec),
@@ -268,7 +270,7 @@ def register_profiles_callbacks(router: Router, ctx: AdminContext) -> None:
             else:
                 hint = "Отправьте новое значение."
             await callback.answer()
-            await callback.message.answer(fsm_prompt(f"Редактирование поля «{field_title}» для кода {code}.\n{hint}"))
+            await edit_panel_message(callback.message, text=fsm_prompt(f"Редактирование поля «{field_title}» для кода {code}.\n{hint}"))
             return
 
         if action.startswith("admin:profile:comment:"):
@@ -284,7 +286,7 @@ def register_profiles_callbacks(router: Router, ctx: AdminContext) -> None:
             await _save_admin_utils_state(container, session, utils_state)
             current_comment = await profile_comment_store.get_comment(code)
             await callback.answer()
-            await callback.message.answer(
+            await edit_panel_message(callback.message, text=
                 "Введите комментарий для профиля.\n"
                 "Чтобы очистить, отправьте `-`.\n\n"
                 f"Текущий: {current_comment or '—'}",

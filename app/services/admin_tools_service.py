@@ -1311,7 +1311,32 @@ def count_targets_for_platform(profiles: Iterable[UserProfile], platform: Platfo
     return 0
 
 
-async def send_stored_media_to_telegram(bot, chat_id: int, media: dict) -> bool:
+_TELEGRAM_CAPTION_LIMIT = 1024
+
+
+def _clip_telegram_caption(text: str) -> str:
+    if len(text) <= _TELEGRAM_CAPTION_LIMIT:
+        return text
+    return text[: _TELEGRAM_CAPTION_LIMIT - 1] + "…"
+
+
+def _resolve_media_caption(media: dict, caption: str | None) -> str | None:
+    if caption is not None:
+        return _clip_telegram_caption(caption) if caption else None
+    stored = str(media.get("caption", "")).strip()
+    return stored or None
+
+
+async def send_stored_media_to_telegram(
+    bot,
+    chat_id: int,
+    media: dict,
+    *,
+    caption: str | None = None,
+    parse_mode: str | None = None,
+    reply_markup=None,
+) -> bool:
+    resolved_caption = _resolve_media_caption(media, caption)
     source_chat_raw = media.get("storage_chat_id")
     source_message_raw = media.get("storage_message_id")
     try:
@@ -1326,6 +1351,9 @@ async def send_stored_media_to_telegram(bot, chat_id: int, media: dict) -> bool:
                 chat_id=chat_id,
                 from_chat_id=source_chat_id,
                 message_id=source_message_id,
+                caption=resolved_caption,
+                parse_mode=parse_mode if resolved_caption else None,
+                reply_markup=reply_markup,
             )
             return True
         except Exception:
@@ -1333,22 +1361,53 @@ async def send_stored_media_to_telegram(bot, chat_id: int, media: dict) -> bool:
 
     media_type = str(media.get("media_type", ""))
     file_id = str(media.get("file_id", ""))
-    caption = str(media.get("caption", "")).strip()
     if not file_id:
         return False
+    send_kwargs = {
+        "chat_id": chat_id,
+        "caption": resolved_caption,
+        "parse_mode": parse_mode if resolved_caption else None,
+        "reply_markup": reply_markup,
+    }
     if media_type == "photo":
-        await bot.send_photo(chat_id=chat_id, photo=file_id, caption=caption or None)
+        await bot.send_photo(photo=file_id, **send_kwargs)
         return True
     if media_type == "video":
-        await bot.send_video(chat_id=chat_id, video=file_id, caption=caption or None)
+        await bot.send_video(video=file_id, **send_kwargs)
         return True
     if media_type == "animation":
-        await bot.send_animation(chat_id=chat_id, animation=file_id, caption=caption or None)
+        await bot.send_animation(animation=file_id, **send_kwargs)
         return True
     if media_type == "document":
-        await bot.send_document(chat_id=chat_id, document=file_id, caption=caption or None)
+        await bot.send_document(document=file_id, **send_kwargs)
         return True
     return False
+
+
+async def send_content_with_media_to_telegram(
+    message,
+    *,
+    text: str,
+    media_items: list[dict],
+    parse_mode: str = "HTML",
+    reply_markup=None,
+) -> None:
+    if not media_items:
+        await message.answer(text, parse_mode=parse_mode, reply_markup=reply_markup)
+        return
+
+    bot = message.bot
+    chat_id = message.chat.id
+    await send_stored_media_to_telegram(
+        bot,
+        chat_id,
+        media_items[0],
+        caption=text,
+        parse_mode=parse_mode,
+        reply_markup=reply_markup,
+    )
+    for media in media_items[1:]:
+        await send_stored_media_to_telegram(bot, chat_id, media, caption="")
 
 
 async def run_periodic_backup_loop(

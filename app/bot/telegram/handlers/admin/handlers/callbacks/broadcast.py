@@ -17,6 +17,7 @@ from aiogram.types import (
 )
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
+from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.fsm_utils import (
     admin_utils_has_waiter,
     fsm_prompt,
@@ -96,7 +97,7 @@ def register_broadcast_callbacks(router: Router, ctx: AdminContext) -> None:
             tg_count = count_targets_for_platform(profiles, Platform.TELEGRAM)
             vk_count = count_targets_for_platform(profiles, Platform.VK)
             await callback.answer()
-            await callback.message.answer(
+            await edit_panel_message(callback.message, text=
                 fsm_prompt(
                     "Аудитория выбрана.\n"
                     f"Получатели: TG {tg_count}, VK {vk_count}\n"
@@ -156,7 +157,7 @@ def register_broadcast_callbacks(router: Router, ctx: AdminContext) -> None:
             utils_state["awaiting_admin_add_id"] = True
             await _save_admin_utils_state(container, session, utils_state)
             await callback.answer()
-            await callback.message.answer("Введите Telegram ID пользователя для добавления в админы.")
+            await edit_panel_message(callback.message, text="Введите Telegram ID пользователя для добавления в админы.")
             return
 
         if action == "admin:admins:add_code":
@@ -169,7 +170,7 @@ def register_broadcast_callbacks(router: Router, ctx: AdminContext) -> None:
             utils_state["awaiting_admin_add_code"] = True
             await _save_admin_utils_state(container, session, utils_state)
             await callback.answer()
-            await callback.message.answer("Введите код профиля (например, 001) для добавления в админы.")
+            await edit_panel_message(callback.message, text="Введите код профиля (например, 001) для добавления в админы.")
             return
 
         if action.startswith("admin:admins:remove:"):

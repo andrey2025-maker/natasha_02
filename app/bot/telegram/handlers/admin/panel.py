@@ -3,6 +3,7 @@ from __future__ import annotations
 from aiogram.types import Message
 
 from app.bot.telegram.callbacks import CallbackCodec
+from app.bot.telegram.callback_panel import edit_panel_message
 from app.core.container import AppContainer
 from app.domain.enums import OrderStatus
 from app.services.admin_tools_service import QuestionsAlertStore
@@ -24,6 +25,21 @@ async def build_admin_panel_text(container: AppContainer) -> str:
         f"📦 Новых заказов: {new_orders}\n"
         f"💬 Неотвеченных вопросов: {unanswered_questions}\n"
         "Выберите раздел:"
+    )
+
+
+async def edit_admin_panel(
+    message: Message,
+    *,
+    container: AppContainer,
+    user_id: int,
+    callback_codec: CallbackCodec,
+) -> None:
+    text = await build_admin_panel_text(container)
+    await edit_panel_message(
+        message,
+        text=text,
+        reply_markup=_admin_root_inline_keyboard(user_id, callback_codec),
     )
 
 

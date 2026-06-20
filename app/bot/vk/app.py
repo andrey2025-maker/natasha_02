@@ -8,6 +8,7 @@ from html import unescape
 
 from aiogram import Bot as TgBot
 from aiogram.exceptions import TelegramForbiddenError
+from app.bot.telegram.defaults import TELEGRAM_BOT_DEFAULTS
 from app.bot.texts import messages as msg
 from app.bot.telegram.callbacks import CallbackCodec
 from app.bot.vk.keyboards import (
@@ -88,7 +89,7 @@ async def run_vk_bot(container: AppContainer) -> None:
 
     vk_bot = VkBot(token=container.settings.vk.bot_token)
     callback_codec = CallbackCodec(container.callback_signer)
-    tg_bot = TgBot(token=container.settings.telegram.bot_token)
+    tg_bot = TgBot(token=container.settings.telegram.bot_token, default=TELEGRAM_BOT_DEFAULTS)
     prohibited_store = ProhibitedGoodsStore(container.settings.database.dsn)
     group_topics_store = GroupTopicsStore(container.settings.database.dsn)
     faq_media_store = FaqMediaStore(container.settings.database.dsn)

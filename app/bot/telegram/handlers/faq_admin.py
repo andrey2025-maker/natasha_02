@@ -6,6 +6,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.bot.telegram.callbacks import CallbackCodec
+from app.bot.telegram.callback_panel import edit_panel_message
 from app.core.container import AppContainer
 from app.services.admin_tools_service import FaqMediaStore
 
@@ -118,6 +119,13 @@ async def refresh_faq_admin_panel(
         except TelegramBadRequest as exc:
             error_text = str(exc).lower()
             if "message is not modified" in error_text:
+                return
+            if panel_message_id and int(panel_message_id) == int(message.message_id):
+                await edit_panel_message(
+                    message,
+                    text=text,
+                    reply_markup=keyboard,
+                )
                 return
     sent = await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
     utils_state["faq_admin_panel_chat_id"] = int(sent.chat.id)

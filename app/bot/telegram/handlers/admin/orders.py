@@ -3,6 +3,7 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.bot.telegram.callbacks import CallbackCodec
+from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.handlers.admin.html import _h
 from app.bot.telegram.handlers.admin.media_helpers import _mark_blocked_bot_if_needed
 from app.core.container import AppContainer
@@ -44,10 +45,11 @@ async def _send_orders_panel(
             )
 
     keyboard = _orders_keyboard(user_id, codec, page, total_pages, orders, selected)
+    text = "\n".join(lines)
     if edit:
-        await message.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=keyboard)
+        await edit_panel_message(message, text=text, parse_mode="HTML", reply_markup=keyboard)
     else:
-        await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=keyboard)
+        await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 def _orders_keyboard(
