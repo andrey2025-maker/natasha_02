@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from html import escape
 
-from app.domain.enums import OrderStatus
+from app.domain.enums import DeliveryFlowType, OrderStatus
 from app.domain.models import BuyoutOrder, OrderStatusHistoryItem
 
 
@@ -46,7 +46,12 @@ def format_order_blockquote(
     header_line: str | None = None,
     extra_lines: list[str] | None = None,
 ) -> str:
-    order_lines = [header_line or f"<b>Выкуп №{_h(order.order_number)}</b>"]
+    if header_line is None:
+        if order.flow_type == DeliveryFlowType.SELF_BUYOUT:
+            header_line = f"<b>Трек №{_h(order.order_number)}</b>"
+        else:
+            header_line = f"<b>Выкуп №{_h(order.order_number)}</b>"
+    order_lines = [header_line]
     if extra_lines:
         order_lines.extend(extra_lines)
     order_lines.extend(

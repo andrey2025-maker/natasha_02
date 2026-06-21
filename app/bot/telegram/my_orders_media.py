@@ -4,7 +4,7 @@ from aiogram.types import Message
 
 from app.core.container import AppContainer
 from app.domain.models import UserSession
-from app.services.admin_tools_service import clip_html_caption, send_stored_media_to_telegram
+from app.services.admin_tools_service import clip_html_caption, send_stored_media_group_to_telegram
 
 
 async def _delete_message_ids(bot, chat_id: int, raw_ids: object) -> None:
@@ -55,20 +55,18 @@ async def _deliver_orders_panel(
     bot = message.bot
     chat_id = message.chat.id
     caption = clip_html_caption(text)
-    await send_stored_media_to_telegram(
+    all_ids = await send_stored_media_group_to_telegram(
         bot,
         chat_id,
-        media_items[0],
+        media_items,
         caption=caption,
         parse_mode="HTML",
         reply_markup=reply_markup,
     )
-    extra_ids: list[int] = []
-    for media in media_items[1:]:
-        sent = await send_stored_media_to_telegram(bot, chat_id, media, caption="")
-        if sent and sent.message_id:
-            extra_ids.append(int(sent.message_id))
-    return extra_ids
+    if not all_ids:
+        await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
+        return []
+    return all_ids[1:]
 
 
 async def clear_my_orders_media(bot, chat_id: int, session: UserSession) -> None:

@@ -51,6 +51,8 @@ class DialogState(str, Enum):
     BUYOUT_WAIT_LINK = "buyout_wait_link"
     BUYOUT_WAIT_DETAILS = "buyout_wait_details"
     BUYOUT_ADD_MORE = "buyout_add_more"
+    TRACK_WAIT_INPUT = "track_wait_input"
+    TRACK_WAIT_CONTINUE = "track_wait_continue"
 
 
 class OutboundMessageStatus(str, Enum):

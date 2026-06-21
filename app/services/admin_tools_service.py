@@ -1376,6 +1376,177 @@ def _resolve_media_caption(media: dict, caption: str | None) -> str | None:
     return stored or None
 
 
+_TELEGRAM_MEDIA_GROUP_LIMIT = 10
+_GROUP_INPUT_MEDIA_TYPES = {"photo", "video", "document"}
+
+
+def _stored_dict_to_input_media(
+    media: dict,
+    *,
+    caption: str | None = None,
+    parse_mode: str | None = None,
+):
+    from aiogram.types import InputMediaDocument, InputMediaPhoto, InputMediaVideo
+
+    media_type = str(media.get("media_type", "")).strip()
+    if media_type not in _GROUP_INPUT_MEDIA_TYPES:
+        return None
+    file_id = str(media.get("file_id", "")).strip()
+    if not file_id:
+        return None
+    cap_kwargs: dict = {}
+    if caption:
+        clipped = _clip_telegram_caption(caption)
+        if clipped:
+            cap_kwargs["caption"] = clipped
+            if parse_mode:
+                cap_kwargs["parse_mode"] = parse_mode
+    if media_type == "photo":
+        return InputMediaPhoto(media=file_id, **cap_kwargs)
+    if media_type == "video":
+        return InputMediaVideo(media=file_id, **cap_kwargs)
+    return InputMediaDocument(media=file_id, **cap_kwargs)
+
+
+def _storage_copy_batch(media_items: list[dict]) -> tuple[int, list[int]] | None:
+    chat_id: int | None = None
+    message_ids: list[int] = []
+    for media in media_items:
+        try:
+            source_chat_id = int(media.get("storage_chat_id")) if media.get("storage_chat_id") else None
+            source_message_id = int(media.get("storage_message_id")) if media.get("storage_message_id") else None
+        except (TypeError, ValueError):
+            return None
+        if not source_chat_id or not source_message_id:
+            return None
+        if chat_id is None:
+            chat_id = source_chat_id
+        elif chat_id != source_chat_id:
+            return None
+        message_ids.append(source_message_id)
+    if chat_id is None or len(message_ids) < 2:
+        return None
+    return chat_id, sorted(set(message_ids))
+
+
+async def _attach_reply_markup(bot, chat_id: int, message_id: int, reply_markup) -> None:
+    if not reply_markup:
+        return
+    try:
+        await bot.edit_message_reply_markup(
+            chat_id=chat_id,
+            message_id=message_id,
+            reply_markup=reply_markup,
+        )
+    except Exception:
+        pass
+
+
+async def send_stored_media_group_to_telegram(
+    bot,
+    chat_id: int,
+    media_items: list[dict],
+    *,
+    caption: str | None = None,
+    parse_mode: str | None = None,
+    reply_markup=None,
+) -> list[int]:
+    items = [item for item in media_items if isinstance(item, dict)]
+    if not items:
+        return []
+    if len(items) == 1:
+        sent = await send_stored_media_to_telegram(
+            bot,
+            chat_id,
+            items[0],
+            caption=caption,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+        )
+        return [int(sent.message_id)] if sent and sent.message_id else []
+
+    clipped_caption = _clip_telegram_caption(caption) if caption else None
+    batch = items[:_TELEGRAM_MEDIA_GROUP_LIMIT]
+    overflow = items[_TELEGRAM_MEDIA_GROUP_LIMIT:]
+
+    input_medias = []
+    grouped_indices: set[int] = set()
+    caption_applied = False
+    for idx, media in enumerate(batch):
+        built = _stored_dict_to_input_media(
+            media,
+            caption=clipped_caption if not caption_applied else None,
+            parse_mode=parse_mode if not caption_applied and clipped_caption else None,
+        )
+        if built is not None:
+            input_medias.append(built)
+            grouped_indices.add(idx)
+            if clipped_caption and not caption_applied:
+                caption_applied = True
+
+    if len(input_medias) >= 2:
+        messages = await bot.send_media_group(chat_id=chat_id, media=input_medias)
+        ids = [int(msg.message_id) for msg in messages if msg.message_id]
+        if ids:
+            await _attach_reply_markup(bot, chat_id, ids[0], reply_markup)
+        for idx, media in enumerate(batch):
+            if idx in grouped_indices:
+                continue
+            sent = await send_stored_media_to_telegram(bot, chat_id, media, caption="")
+            if sent and sent.message_id:
+                ids.append(int(sent.message_id))
+        for media in overflow:
+            sent = await send_stored_media_to_telegram(bot, chat_id, media, caption="")
+            if sent and sent.message_id:
+                ids.append(int(sent.message_id))
+        return ids
+
+    storage_batch = _storage_copy_batch(batch)
+    if storage_batch is not None:
+        from_chat_id, message_ids = storage_batch
+        try:
+            copied = await bot.copy_messages(
+                chat_id=chat_id,
+                from_chat_id=from_chat_id,
+                message_ids=message_ids,
+            )
+        except Exception:
+            copied = None
+        if copied:
+            ids = [int(item.message_id) for item in copied if getattr(item, "message_id", None)]
+            if ids:
+                if clipped_caption:
+                    try:
+                        await bot.edit_message_caption(
+                            chat_id=chat_id,
+                            message_id=ids[0],
+                            caption=clipped_caption,
+                            parse_mode=parse_mode,
+                        )
+                    except Exception:
+                        pass
+                await _attach_reply_markup(bot, chat_id, ids[0], reply_markup)
+            for media in overflow:
+                sent = await send_stored_media_to_telegram(bot, chat_id, media, caption="")
+                if sent and sent.message_id:
+                    ids.append(int(sent.message_id))
+            return ids
+
+    ids: list[int] = []
+    for idx, media in enumerate(items):
+        sent = await send_stored_media_to_telegram(
+            bot,
+            chat_id,
+            media,
+            caption=clipped_caption if idx == 0 else "",
+            parse_mode=parse_mode if idx == 0 else None,
+            reply_markup=reply_markup if idx == 0 else None,
+        )
+        if sent and sent.message_id:
+            ids.append(int(sent.message_id))
+    return ids
+
+
 async def send_stored_media_to_telegram(
     bot,
     chat_id: int,

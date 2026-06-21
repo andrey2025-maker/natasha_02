@@ -7,7 +7,7 @@ from app.security.callback_signer import CallbackSigner
 from app.services.admin_service import AdminService
 from app.services.faq_service import FaqService
 from app.services.flows.buyout_flow import BuyoutFlowService
-from app.services.flows.profile_flow import ProfileFlowService
+from app.services.flows.track_flow import TrackFlowService
 from app.services.order_admin_service import OrderAdminService
 from app.services.profile_code_service import ProfileCodeService
 from app.services.rate_limit_service import RateLimitService
@@ -47,6 +47,7 @@ class AppContainer:
     stats_service: StatsService
     profile_flow: ProfileFlowService
     buyout_flow: BuyoutFlowService
+    track_flow: TrackFlowService
 
 
 def build_container(
@@ -79,6 +80,7 @@ def build_container(
         buyout_repo,
         preferences_store=UserPreferencesStore(settings.database.dsn),
     )
+    track_flow = TrackFlowService(session_repo, buyout_repo)
 
     return AppContainer(
         settings=settings,
@@ -100,4 +102,5 @@ def build_container(
         stats_service=stats_service,
         profile_flow=profile_flow,
         buyout_flow=buyout_flow,
+        track_flow=track_flow,
     )

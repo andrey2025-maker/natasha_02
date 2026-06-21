@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import escape
+
 from aiogram import F, Router
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.exceptions import TelegramForbiddenError
@@ -8,12 +10,17 @@ from aiogram.types import CallbackQuery, Message
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
 from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.keyboards.main_menu import my_orders_message_keyboard
-from app.bot.telegram.keyboards.profile import platforms_keyboard, profile_menu_keyboard
+from app.bot.telegram.keyboards.profile import (
+    platforms_keyboard,
+    profile_menu_keyboard,
+    track_continue_keyboard,
+    track_mode_keyboard,
+)
 from app.bot.telegram.my_orders_media import present_my_orders_panel
 from app.bot.texts import messages as msg
 from app.core.container import AppContainer
 from app.domain.enums import DialogState, Platform
-from app.domain.models import OutboundMessage
+from app.domain.models import BuyoutOrder, OutboundMessage
 from app.services.admin_tools_service import GroupTopicsStore, NotificationSettingsStore, QuestionsAlertStore, TopicDialogStore
 from app.services.flows.profile_flow import FlowResponse
 from app.bot.telegram.handlers.admin import admin_session_has_pending, clear_admin_input_states
@@ -43,6 +50,11 @@ PROFILE_CALLBACK_ACTIONS = {
     "profile:buyout_start",
     "profile:buyout_orders",
     "profile:buyout_filters",
+    "profile:track:open",
+    "profile:track:mode:numbers",
+    "profile:track:mode:comments",
+    "profile:track:more",
+    "profile:track:done",
 }
 
 
@@ -141,6 +153,47 @@ def build_profile_router(container: AppContainer) -> Router:
     async def _is_blocked_user(user_id: int) -> bool:
         profile = await container.profile_repo.get_by_platform_user(Platform.TELEGRAM, user_id)
         return bool(profile and profile.is_blocked_by_admin)
+
+    async def _post_user_tracks_to_group(
+        message: Message,
+        *,
+        profile,
+        orders: list[BuyoutOrder],
+    ) -> tuple[bool, str]:
+        topics = await group_topics_store.ensure_all_system_topics(message.bot)
+        if not topics or "buyout" not in topics:
+            return False, "Тема «Выкупы» недоступна. Обратитесь в поддержку."
+        lines = [
+            "<b>📦 Трек-номера</b>",
+            f"Клиент: {escape(profile.code)} / {escape(profile.name or '—')}",
+            "",
+        ]
+        for order in orders:
+            track = escape(order.track_number or "")
+            comment = (order.quantity_text or "").strip()
+            if comment == "—":
+                comment = ""
+            line = f"• <b>{escape(order.order_number)}</b>: <code>{track}</code>"
+            if comment:
+                line += f" — {escape(comment)}"
+            lines.append(line)
+        try:
+            disable_notification = await notification_settings_store.should_disable_notification("user")
+            await message.bot.send_message(
+                chat_id=int(topics["chat_id"]),
+                text="\n".join(lines),
+                parse_mode="HTML",
+                message_thread_id=int(topics["buyout"]),
+                disable_notification=disable_notification,
+            )
+        except Exception:
+            return False, "Не удалось отправить трек-номера. Попробуйте позже."
+        return True, f"Сохранено заказов: {len(orders)}."
+
+    def _track_reply_markup(user_id: int, state: DialogState):
+        if state == DialogState.TRACK_WAIT_CONTINUE:
+            return track_continue_keyboard(user_id, callback_codec)
+        return None
 
     @router.message(F.text.in_({"Профиль", "👤 Профиль"}))
     async def profile_menu(message: Message) -> None:
@@ -320,6 +373,62 @@ def build_profile_router(container: AppContainer) -> Router:
                 replace_message=True,
             )
             return
+        if action == "profile:track:open":
+            profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
+            if not profile or not profile.is_filled:
+                await callback.answer("Сначала заполните профиль.", show_alert=True)
+                return
+            response = await container.track_flow.show_mode_menu(session)
+            response.reply_markup = track_mode_keyboard(callback.from_user.id, callback_codec)
+            await callback.answer()
+            await _apply_response(callback.message, response, edit=True)
+            return
+        if action in {"profile:track:mode:numbers", "profile:track:mode:comments"}:
+            profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
+            if not profile or not profile.is_filled:
+                await callback.answer("Сначала заполните профиль.", show_alert=True)
+                return
+            mode = "numbers" if action.endswith(":numbers") else "comments"
+            response = await container.track_flow.start_mode(session, mode)
+            await callback.answer()
+            await _apply_response(callback.message, response, edit=True)
+            return
+        if action == "profile:track:more":
+            response = await container.track_flow.continue_input(session)
+            await callback.answer()
+            await _apply_response(callback.message, response, edit=True)
+            return
+        if action == "profile:track:done":
+            profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
+            if not profile or not profile.is_filled:
+                await callback.answer("Сначала заполните профиль.", show_alert=True)
+                return
+            pending = list(session.state_data.get("track_pending") or [])
+            if not pending:
+                await callback.answer("Нет трек-номеров для отправки.", show_alert=True)
+                return
+            try:
+                created = await container.track_flow.create_orders_from_tracks(profile, pending)
+            except Exception:
+                await callback.answer("Не удалось сохранить заказы.", show_alert=True)
+                return
+            if not created:
+                await callback.answer("Не распознаны трек-номера для сохранения.", show_alert=True)
+                return
+            ok, note = await _post_user_tracks_to_group(
+                callback.message,
+                profile=profile,
+                orders=created,
+            )
+            await container.track_flow.clear(session)
+            await callback.answer()
+            if ok:
+                await callback.message.answer(f"{note} Заказы добавлены в «Мои заказы».")
+            else:
+                await callback.message.answer(
+                    f"Заказы сохранены в «Мои заказы», но {note[0].lower()}{note[1:]}"
+                )
+            return
         response = await container.profile_flow.handle_callback(session, action, callback_codec)
         if action in {"passport_yes", "passport_no"}:
             response.reply_markup = platforms_keyboard(callback.from_user.id, callback_codec)
@@ -407,6 +516,11 @@ def build_profile_router(container: AppContainer) -> Router:
             DialogState.BUYOUT_ADD_MORE,
         }:
             raise SkipHandler
+        if session.state in {DialogState.TRACK_WAIT_INPUT, DialogState.TRACK_WAIT_CONTINUE}:
+            response = await container.track_flow.handle_text(session, message.text)
+            response.reply_markup = _track_reply_markup(message.from_user.id, response.state)
+            await _apply_response(message, response)
+            return
         if await container.admin_service.is_admin(message.from_user.id):
             if admin_session_has_pending(session):
                 raise SkipHandler

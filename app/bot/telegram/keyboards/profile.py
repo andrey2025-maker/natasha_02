@@ -9,6 +9,8 @@ from app.bot.telegram.keyboards.main_menu import (
     platforms_keyboard,
     profile_confirm_keyboard,
     profile_menu_keyboard,
+    track_continue_keyboard,
+    track_mode_keyboard,
     yes_no_keyboard,
 )
 

@@ -31,6 +31,10 @@ def profile_menu_keyboard(
     profile: UserProfile | None = None,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
+    if profile and profile.is_filled:
+        rows.append(
+            [InlineKeyboardButton(text="📦 Трек номер", callback_data=codec.encode("profile:track:open", user_id))]
+        )
     if not (profile and profile.is_filled):
         rows.append(
             [InlineKeyboardButton(text="📝 Заполнить профиль", callback_data=codec.encode("profile:start_fill", user_id))]
@@ -50,6 +54,40 @@ def profile_menu_keyboard(
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def track_mode_keyboard(user_id: int, codec: CallbackCodec) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔢 Только трек номера",
+                    callback_data=codec.encode("profile:track:mode:numbers", user_id),
+                ),
+                InlineKeyboardButton(
+                    text="💬 С комментариями",
+                    callback_data=codec.encode("profile:track:mode:comments", user_id),
+                ),
+            ],
+        ]
+    )
+
+
+def track_continue_keyboard(user_id: int, codec: CallbackCodec) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="➕ Ещё",
+                    callback_data=codec.encode("profile:track:more", user_id),
+                ),
+                InlineKeyboardButton(
+                    text="📋 Все",
+                    callback_data=codec.encode("profile:track:done", user_id),
+                ),
+            ],
+        ]
+    )
 
 
 def profile_confirm_keyboard(user_id: int, codec: CallbackCodec) -> InlineKeyboardMarkup:
