@@ -7,6 +7,7 @@ from app.security.callback_signer import CallbackSigner
 from app.services.admin_service import AdminService
 from app.services.faq_service import FaqService
 from app.services.flows.buyout_flow import BuyoutFlowService
+from app.services.flows.profile_flow import ProfileFlowService
 from app.services.flows.track_flow import TrackFlowService
 from app.services.order_admin_service import OrderAdminService
 from app.services.profile_code_service import ProfileCodeService

@@ -426,7 +426,7 @@ def build_profile_router(container: AppContainer) -> Router:
                 await callback.message.answer(f"{note} Заказы добавлены в «Мои заказы».")
             else:
                 await callback.message.answer(
-                    f"Заказы сохранены в «Мои заказы», но {note[0].lower()}{note[1:]}"
+                    f"Заказы сохранены в «Мои заказы», но {note.lower()}"
                 )
             return
         response = await container.profile_flow.handle_callback(session, action, callback_codec)
