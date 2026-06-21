@@ -68,7 +68,6 @@ def register_tracks_callbacks(router: Router, ctx: AdminContext) -> None:
                 callback.message,
                 user_id=callback.from_user.id,
                 codec=callback_codec,
-                edit=True,
             )
             return
 

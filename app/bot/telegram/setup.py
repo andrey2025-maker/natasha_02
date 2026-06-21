@@ -1,0 +1,29 @@
+from __future__ import annotations
+
+from aiogram import Dispatcher
+
+from app.bot.telegram.defaults import TELEGRAM_BOT_DEFAULTS
+from app.bot.telegram.handlers.admin import build_admin_router
+from app.bot.telegram.handlers.buyout import build_buyout_router
+from app.bot.telegram.handlers.profile import build_profile_router
+from app.bot.telegram.handlers.questions import build_questions_router
+from app.bot.telegram.handlers.start import build_start_router
+from app.bot.telegram.middleware.dialog_mirror import DialogMirrorMiddleware
+from app.bot.telegram.mirror_bot import DialogMirrorBot
+from app.core.container import AppContainer
+
+
+def build_telegram_bot_and_dispatcher(container: AppContainer) -> tuple[DialogMirrorBot, Dispatcher]:
+    bot = DialogMirrorBot(
+        container=container,
+        token=container.settings.telegram.bot_token,
+        default=TELEGRAM_BOT_DEFAULTS,
+    )
+    dispatcher = Dispatcher()
+    dispatcher.message.outer_middleware(DialogMirrorMiddleware(container))
+    dispatcher.include_router(build_start_router(container))
+    dispatcher.include_router(build_questions_router(container))
+    dispatcher.include_router(build_buyout_router(container))
+    dispatcher.include_router(build_admin_router(container))
+    dispatcher.include_router(build_profile_router(container))
+    return bot, dispatcher

@@ -9,16 +9,8 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from aiogram import Bot, Dispatcher
-
-from app.bot.telegram.defaults import TELEGRAM_BOT_DEFAULTS
-
+from app.bot.telegram.setup import build_telegram_bot_and_dispatcher
 from app.bootstrap import build_container_from_env
-from app.bot.telegram.handlers.admin import build_admin_router
-from app.bot.telegram.handlers.buyout import build_buyout_router
-from app.bot.telegram.handlers.profile import build_profile_router
-from app.bot.telegram.handlers.questions import build_questions_router
-from app.bot.telegram.handlers.start import build_start_router
 from app.services.admin_tools_service import BackupService, NotificationSettingsStore, run_periodic_backup_loop
 from app.services.error_notifier import ErrorNotifier
 from app.core.process_lock import ProcessLock, ProcessLockError
@@ -37,16 +29,7 @@ async def run() -> None:
         return
 
     container = await build_container_from_env()
-    bot = Bot(
-        token=container.settings.telegram.bot_token,
-        default=TELEGRAM_BOT_DEFAULTS,
-    )
-    dispatcher = Dispatcher()
-    dispatcher.include_router(build_start_router(container))
-    dispatcher.include_router(build_questions_router(container))
-    dispatcher.include_router(build_buyout_router(container))
-    dispatcher.include_router(build_admin_router(container))
-    dispatcher.include_router(build_profile_router(container))
+    bot, dispatcher = build_telegram_bot_and_dispatcher(container)
 
     backup_service = BackupService(
         database_dsn=container.settings.database.dsn,

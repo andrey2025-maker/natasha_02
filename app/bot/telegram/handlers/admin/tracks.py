@@ -212,12 +212,11 @@ def _track_status_button_text(status: OrderStatus) -> str:
     return f"{emoji} {label}"
 
 
-async def open_admin_tracks_panel(message: Message, *, user_id: int, codec: CallbackCodec, edit: bool = False) -> None:
+async def open_admin_tracks_panel(message: Message, *, user_id: int, codec: CallbackCodec) -> None:
     await edit_panel_message(
         message,
         text=tracks_root_text(),
         reply_markup=_tracks_root_keyboard(user_id, codec),
-        edit=edit,
     )
 
 

@@ -24,10 +24,7 @@ from app.domain.models import BuyoutOrder, OutboundMessage
 from app.services.admin_tools_service import GroupTopicsStore, NotificationSettingsStore, QuestionsAlertStore, TopicDialogStore
 from app.services.flows.profile_flow import FlowResponse
 from app.bot.telegram.handlers.admin import admin_session_has_pending, clear_admin_input_states
-from app.bot.telegram.handlers.questions_topic import (
-    forward_idle_message_to_questions_topic,
-    forward_message_to_dialog_topic,
-)
+from app.bot.telegram.handlers.questions_topic import forward_idle_message_to_questions_topic
 from app.services.dialog_topic_profile_sync import refresh_dialog_topic_profile
 
 
@@ -436,7 +433,10 @@ def build_profile_router(container: AppContainer) -> Router:
         await _apply_response(callback.message, response, edit=True)
 
     @router.message(F.photo | F.video | F.animation | F.document)
-    async def profile_idle_media_flow(message: Message) -> None:
+    async def profile_idle_media_flow(
+        message: Message,
+        dialog_mirror: tuple[int, int, int] | None = None,
+    ) -> None:
         if not message.from_user:
             raise SkipHandler
         if message.chat.type != "private":
@@ -445,28 +445,7 @@ def build_profile_router(container: AppContainer) -> Router:
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
         session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
-        is_admin = await container.admin_service.is_admin(message.from_user.id)
-        if is_admin:
-            if session.state == DialogState.IDLE:
-                logs_chat_id, _ = await group_topics_store.get_tg_topic("logs")
-                if not logs_chat_id:
-                    await message.answer(
-                        "Диалоговая группа не настроена. "
-                        "Задайте chat_id в Админ → Утилиты → Группа."
-                    )
-                    return
-                copied = await forward_message_to_dialog_topic(
-                    message=message,
-                    container=container,
-                    group_topics_store=group_topics_store,
-                    notification_settings_store=notification_settings_store,
-                    topic_dialog_store=topic_dialog_store,
-                )
-                if not copied:
-                    await message.answer(
-                        "Не удалось создать тему или доставить сообщение в группу. "
-                        "Проверьте, что группа — форум и у бота есть права на управление темами."
-                    )
+        if await container.admin_service.is_admin(message.from_user.id):
             return
         user_key = f"tg:{message.from_user.id}"
         if not container.rate_limiter.allow_request(user_key, "<media>"):
@@ -492,10 +471,14 @@ def build_profile_router(container: AppContainer) -> Router:
             questions_alert_store=questions_alert_store,
             callback_codec=callback_codec,
             send_ack=True,
+            dialog_mirror=dialog_mirror,
         )
 
     @router.message()
-    async def profile_text_flow(message: Message) -> None:
+    async def profile_text_flow(
+        message: Message,
+        dialog_mirror: tuple[int, int, int] | None = None,
+    ) -> None:
         if not message.from_user or not message.text:
             raise SkipHandler
         if message.chat.type != "private":
@@ -541,27 +524,10 @@ def build_profile_router(container: AppContainer) -> Router:
                     questions_alert_store=questions_alert_store,
                     callback_codec=callback_codec,
                     send_ack=True,
+                    dialog_mirror=dialog_mirror,
                 )
         elif session.state == DialogState.IDLE:
-            logs_chat_id, _ = await group_topics_store.get_tg_topic("logs")
-            if not logs_chat_id:
-                await message.answer(
-                    "Диалоговая группа не настроена. "
-                    "Задайте chat_id в Админ → Утилиты → Группа."
-                )
-                return
-            copied = await forward_message_to_dialog_topic(
-                message=message,
-                container=container,
-                group_topics_store=group_topics_store,
-                notification_settings_store=notification_settings_store,
-                topic_dialog_store=topic_dialog_store,
-            )
-            if not copied:
-                await message.answer(
-                    "Не удалось создать тему или доставить сообщение в группу. "
-                    "Проверьте, что группа — форум и у бота есть права на управление темами."
-                )
+            return
         if session.state == DialogState.IDLE:
             return
 

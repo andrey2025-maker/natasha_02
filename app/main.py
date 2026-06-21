@@ -3,16 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from aiogram import Bot, Dispatcher
-
-from app.bot.telegram.defaults import TELEGRAM_BOT_DEFAULTS
-
+from app.bot.telegram.setup import build_telegram_bot_and_dispatcher
 from app.bot.vk.app import run_vk_bot, run_vk_outbox_worker
-from app.bot.telegram.handlers.buyout import build_buyout_router
-from app.bot.telegram.handlers.admin import build_admin_router
-from app.bot.telegram.handlers.profile import build_profile_router
-from app.bot.telegram.handlers.questions import build_questions_router
-from app.bot.telegram.handlers.start import build_start_router
 from app.bootstrap import build_container_from_env
 from app.core.process_lock import ProcessLock, ProcessLockError
 from app.services.admin_tools_service import BackupService, NotificationSettingsStore, run_periodic_backup_loop
@@ -32,10 +24,7 @@ async def run_telegram_bot() -> None:
 
     container = await build_container_from_env()
 
-    bot = Bot(
-        token=container.settings.telegram.bot_token,
-        default=TELEGRAM_BOT_DEFAULTS,
-    )
+    bot, dispatcher = build_telegram_bot_and_dispatcher(container)
     backup_service = BackupService(
         database_dsn=container.settings.database.dsn,
         profile_repo=container.profile_repo,
@@ -43,12 +32,6 @@ async def run_telegram_bot() -> None:
     )
     notification_settings_store = NotificationSettingsStore(container.settings.database.dsn)
     error_notifier = ErrorNotifier(container.settings)
-    dispatcher = Dispatcher()
-    dispatcher.include_router(build_start_router(container))
-    dispatcher.include_router(build_questions_router(container))
-    dispatcher.include_router(build_buyout_router(container))
-    dispatcher.include_router(build_admin_router(container))
-    dispatcher.include_router(build_profile_router(container))
 
     logger.info("Telegram bot started")
     vk_worker_task = _create_guarded_task("vk_outbox_worker", run_vk_outbox_worker(container), error_notifier)

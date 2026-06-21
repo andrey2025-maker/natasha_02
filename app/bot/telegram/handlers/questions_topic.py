@@ -155,6 +155,73 @@ async def forward_message_to_dialog_topic(
     return int(logs_chat_id), int(dialog_topic_id), int(dialog_copy.message_id)
 
 
+async def mirror_bot_message_to_dialog_topic(
+    bot,
+    *,
+    user_chat_id: int,
+    message_id: int,
+    container: AppContainer,
+    group_topics_store: GroupTopicsStore,
+    notification_settings_store: NotificationSettingsStore,
+    topic_dialog_store: TopicDialogStore,
+) -> tuple[int, int, int] | None:
+    if int(user_chat_id) <= 0:
+        return None
+
+    tg_user_id = int(user_chat_id)
+    profile = await container.profile_repo.get_by_platform_user(Platform.TELEGRAM, tg_user_id)
+    user_is_admin = await container.admin_service.is_admin(tg_user_id)
+    admin_topic = user_is_admin and profile is None
+    logs_chat_id, logs_default_topic_id = await group_topics_store.get_tg_topic("logs")
+    if not logs_chat_id:
+        return None
+
+    dialog_topic_id = await ensure_dialog_topic_for_telegram_user(
+        bot=bot,
+        chat_id=int(logs_chat_id),
+        tg_user_id=tg_user_id,
+        group_topics_store=group_topics_store,
+        topic_dialog_store=topic_dialog_store,
+        profile=profile,
+        is_admin=admin_topic,
+        default_topic_id=logs_default_topic_id,
+    )
+    if not dialog_topic_id:
+        return None
+
+    await refresh_dialog_topic_profile(
+        bot,
+        container=container,
+        tg_user_id=tg_user_id,
+        group_topics_store=group_topics_store,
+        topic_dialog_store=topic_dialog_store,
+        notification_settings_store=notification_settings_store,
+        is_admin=admin_topic,
+    )
+
+    notify_kind = "button" if user_is_admin else "user"
+    disable_notification = await notification_settings_store.should_disable_notification(notify_kind)
+    try:
+        dialog_copy = await bot.copy_message(
+            chat_id=int(logs_chat_id),
+            from_chat_id=int(user_chat_id),
+            message_id=int(message_id),
+            message_thread_id=int(dialog_topic_id),
+            disable_notification=disable_notification,
+        )
+    except Exception:
+        return None
+
+    await topic_dialog_store.bind_topic_message_to_user(
+        chat_id=int(logs_chat_id),
+        topic_id=int(dialog_topic_id),
+        topic_message_id=int(dialog_copy.message_id),
+        platform=Platform.TELEGRAM.value,
+        platform_user_id=tg_user_id,
+    )
+    return int(logs_chat_id), int(dialog_topic_id), int(dialog_copy.message_id)
+
+
 async def forward_idle_message_to_questions_topic(
     message: Message,
     *,
@@ -165,6 +232,7 @@ async def forward_idle_message_to_questions_topic(
     questions_alert_store: QuestionsAlertStore,
     callback_codec: CallbackCodec,
     send_ack: bool = True,
+    dialog_mirror: tuple[int, int, int] | None = None,
 ) -> None:
     if not message.from_user:
         return
@@ -190,14 +258,16 @@ async def forward_idle_message_to_questions_topic(
             )
         return
 
-    copied = await forward_message_to_dialog_topic(
-        message,
-        container=container,
-        group_topics_store=group_topics_store,
-        notification_settings_store=notification_settings_store,
-        topic_dialog_store=topic_dialog_store,
-        is_admin=False,
-    )
+    copied = dialog_mirror
+    if not copied:
+        copied = await forward_message_to_dialog_topic(
+            message,
+            container=container,
+            group_topics_store=group_topics_store,
+            notification_settings_store=notification_settings_store,
+            topic_dialog_store=topic_dialog_store,
+            is_admin=False,
+        )
     if not copied:
         return
 
