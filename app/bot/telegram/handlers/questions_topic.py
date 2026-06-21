@@ -74,18 +74,15 @@ async def should_forward_idle_message_to_questions(
         return False
     if message.chat.type != "private":
         return False
-    if await container.admin_service.is_admin(message.from_user.id):
-        return False
-    session = await container.profile_flow.get_or_create_session(
-        Platform.TELEGRAM,
-        message.from_user.id,
-    )
-    if session.state != DialogState.IDLE:
-        return False
     text = (message.text or "").strip()
     if text.startswith("/"):
         return False
     if text in MENU_TEXTS_SKIP_QUESTIONS_ALERT:
+        return False
+    if await container.admin_service.is_admin(message.from_user.id):
+        return False
+    session = await container.session_repo.get(Platform.TELEGRAM, message.from_user.id)
+    if session is not None and session.state != DialogState.IDLE:
         return False
     user_key = f"tg:{message.from_user.id}"
     payload = text or "<media>"
@@ -104,6 +101,14 @@ async def should_forward_idle_message_to_questions(
         if not container.rate_limiter.validate_user_payload_size(text_size=0, media_size_mb=media_size_mb):
             return False
     return True
+
+
+def can_skip_idle_questions_precheck(message: Message) -> bool:
+    """Быстрая проверка без БД: сообщение точно не idle-вопрос."""
+    text = (message.text or "").strip()
+    if text.startswith("/"):
+        return True
+    return text in MENU_TEXTS_SKIP_QUESTIONS_ALERT
 
 
 def processor_display_name(user) -> str:

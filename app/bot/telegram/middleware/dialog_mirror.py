@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
@@ -10,6 +11,7 @@ from app.bot.telegram.callbacks import CallbackCodec
 from app.bot.telegram.dialog_mirror_scheduler import DialogMirrorScheduler
 from app.bot.telegram.handlers.questions_topic import (
     DialogMirrorResult,
+    can_skip_idle_questions_precheck,
     forward_idle_message_to_questions_topic,
     forward_message_to_dialog_topic,
     should_forward_idle_message_to_questions,
@@ -22,6 +24,8 @@ from app.services.admin_tools_service import (
     QuestionsAlertStore,
     TopicDialogStore,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DialogMirrorIncomingMiddleware(BaseMiddleware):
@@ -51,9 +55,26 @@ class DialogMirrorIncomingMiddleware(BaseMiddleware):
         result = await handler(event, data)
 
         if isinstance(event, Message) and mirror_task is not None:
-            await self._schedule_idle_questions_forward(event, mirror_task)
+            if not can_skip_idle_questions_precheck(event):
+                asyncio.create_task(
+                    self._schedule_idle_questions_forward_safe(event, mirror_task),
+                    name=f"questions-idle-schedule-{event.chat.id}",
+                )
 
         return result
+
+    async def _schedule_idle_questions_forward_safe(
+        self,
+        message: Message,
+        mirror_task: asyncio.Task[DialogMirrorResult | None],
+    ) -> None:
+        try:
+            await self._schedule_idle_questions_forward(message, mirror_task)
+        except Exception:
+            logger.exception(
+                "Failed to schedule idle questions forward (chat_id=%s)",
+                message.chat.id,
+            )
 
     def _schedule_incoming_mirror(
         self,
