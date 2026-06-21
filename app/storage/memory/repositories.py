@@ -213,8 +213,16 @@ class InMemoryBuyoutOrderRepository(BuyoutOrderRepository):
         self._orders[stored.id] = stored
         return deepcopy(stored)
 
-    async def count_for_user(self, user_profile_id: int) -> int:
-        return sum(1 for order in self._orders.values() if order.user_profile_id == user_profile_id)
+    async def count_for_user(
+        self,
+        user_profile_id: int,
+        statuses: list[str] | None = None,
+    ) -> int:
+        rows = [order for order in self._orders.values() if order.user_profile_id == user_profile_id]
+        if statuses:
+            allowed = set(statuses)
+            rows = [order for order in rows if order.status.value in allowed]
+        return len(rows)
 
     async def count_all(self, statuses: list[str] | None = None) -> int:
         rows = list(self._orders.values())

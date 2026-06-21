@@ -76,6 +76,36 @@ class ProfileFlowService:
         )
         return await self._sessions.save(session)
 
+    async def ensure_session(
+        self,
+        platform: Platform,
+        platform_user_id: int,
+        *,
+        known_profile: UserProfile | None = None,
+        existing_session: UserSession | None = None,
+    ) -> UserSession:
+        session = existing_session
+        if session is None:
+            session = await self._sessions.get(platform, platform_user_id)
+        if session is None:
+            return await self.get_or_create_session(
+                platform,
+                platform_user_id,
+                known_profile=known_profile,
+            )
+        profile = known_profile
+        if profile is None:
+            profile = await self._profiles.get_by_platform_user(platform, platform_user_id)
+        if profile:
+            asyncio.create_task(
+                _touch_profile_activity(
+                    self._profiles,
+                    profile.id,
+                    clear_blocked_bot=bool(profile.blocked_bot),
+                )
+            )
+        return session
+
     async def cancel_to_idle(self, session: UserSession) -> None:
         session.state = DialogState.IDLE
         session.state_data = _keep_prefs(session.state_data, {})

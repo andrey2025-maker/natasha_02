@@ -95,9 +95,26 @@ class PostgresBuyoutOrderRepository(BuyoutOrderRepository):
             )
         return _row_to_order(row)
 
-    async def count_for_user(self, user_profile_id: int) -> int:
+    async def count_for_user(
+        self,
+        user_profile_id: int,
+        statuses: list[str] | None = None,
+    ) -> int:
         async with self._pool.acquire() as conn:
-            count = await conn.fetchval("SELECT COUNT(*) FROM buyout_orders WHERE user_profile_id = $1", user_profile_id)
+            if statuses:
+                count = await conn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM buyout_orders
+                    WHERE user_profile_id = $1 AND status = ANY($2::text[])
+                    """,
+                    user_profile_id,
+                    statuses,
+                )
+            else:
+                count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM buyout_orders WHERE user_profile_id = $1",
+                    user_profile_id,
+                )
         return int(count or 0)
 
     async def count_all(self, statuses: list[str] | None = None) -> int:

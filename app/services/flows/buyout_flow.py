@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 from html import escape
@@ -189,39 +190,86 @@ class BuyoutFlowService:
         marketplace_letter = _marketplace_letter(product_url)
         return f"{profile.code}/{count + 1}{marketplace_letter}"
 
-    async def render_orders(self, session: UserSession, page: int = 1, page_size: int = 9) -> BuyoutFlowResponse:
-        await self._hydrate_preferences(session)
+    async def prepare_preferences(self, session: UserSession, *, persist: bool = True) -> None:
+        await self._hydrate_preferences(session, persist=persist)
+
+    async def persist_preferences_if_loaded(self, session: UserSession) -> None:
+        if session.state_data.get("_prefs_loaded"):
+            await self._sessions.save(session)
+
+    async def _load_order_page_details(
+        self,
+        orders: list[BuyoutOrder],
+    ) -> tuple[dict[int, list[OrderStatusHistoryItem]], list[tuple[str, list[dict]]]]:
+        if not orders:
+            return {}, []
+        history_lists, media_lists = await asyncio.gather(
+            asyncio.gather(
+                *[self._orders.list_status_history(order.id, limit=3) for order in orders]
+            ),
+            asyncio.gather(
+                *[self._orders.list_order_media(order.id) for order in orders]
+            ),
+        )
+        histories = {order.id: history for order, history in zip(orders, history_lists)}
+        order_media_groups: list[tuple[str, list[dict]]] = []
+        for order, media_items in zip(orders, media_lists):
+            media_dicts = collect_order_media_dicts(order, media_items)
+            if media_dicts:
+                order_media_groups.append((order.order_number, media_dicts))
+        return histories, order_media_groups
+
+    async def render_orders(
+        self,
+        session: UserSession,
+        page: int = 1,
+        page_size: int = 9,
+        *,
+        include_details: bool = True,
+    ) -> BuyoutFlowResponse:
+        await self._hydrate_preferences(session, persist=False)
         profile = await self._profiles.get_by_platform_user(session.platform, session.platform_user_id)
         if not profile:
             return BuyoutFlowResponse("Сначала заполните профиль.", DialogState.IDLE, {})
 
         statuses = self._get_query_statuses(session)
-        all_orders = await self._orders.list_for_user(profile.id, limit=1000, offset=0, statuses=statuses)
-        total = len(all_orders)
+        total = await self._orders.count_for_user(profile.id, statuses=statuses)
         if total == 0:
             return BuyoutFlowResponse("По текущим фильтрам заказов нет.", DialogState.IDLE, {})
 
         safe_page = max(1, page)
         offset = (safe_page - 1) * page_size
-        orders = await self._orders.list_for_user(profile.id, limit=page_size, offset=offset, statuses=statuses)
+        orders = await self._orders.list_for_user(
+            profile.id,
+            limit=page_size,
+            offset=offset,
+            statuses=statuses,
+        )
         if not orders and safe_page > 1:
             safe_page -= 1
             offset = (safe_page - 1) * page_size
-            orders = await self._orders.list_for_user(profile.id, limit=page_size, offset=offset, statuses=statuses)
+            orders = await self._orders.list_for_user(
+                profile.id,
+                limit=page_size,
+                offset=offset,
+                statuses=statuses,
+            )
 
-        lines: list[str] = []
+        header_parts = ["<b>Мои заказы</b>", ""]
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        header_parts.append(f"Страница {safe_page}/{total_pages}")
+        if orders and not include_details:
+            header_parts.append("<i>Загрузка истории и медиа…</i>")
+
         order_media_groups: list[tuple[str, list[dict]]] = []
-        for order in orders:
-            history = await self._orders.list_status_history(order.id, limit=3)
-            media_items = await self._orders.list_order_media(order.id)
-            media_dicts = collect_order_media_dicts(order, media_items)
-            if media_dicts:
-                order_media_groups.append((order.order_number, media_dicts))
-            lines.append(format_order_blockquote(order, history))
+        if include_details:
+            histories, order_media_groups = await self._load_order_page_details(orders)
+            lines = [format_order_blockquote(order, histories.get(order.id, [])) for order in orders]
+        else:
+            lines = [format_order_blockquote(order, []) for order in orders]
 
-        total_pages = (total + page_size - 1) // page_size
         text = assemble_orders_panel_text(
-            ["<b>Мои заказы</b>", "", f"Страница {safe_page}/{total_pages}"],
+            header_parts,
             lines,
             for_media_caption=bool(order_media_groups),
         )
@@ -268,9 +316,6 @@ class BuyoutFlowService:
     def filter_states(self, session: UserSession) -> dict[OrderStatus, bool]:
         active = set(self._get_active_filter_values(session))
         return {status: status.value in active for status in _MY_ORDERS_FILTER_STATUSES}
-
-    async def prepare_preferences(self, session: UserSession) -> None:
-        await self._hydrate_preferences(session)
 
     def parse_filter_alias(self, raw: str) -> OrderStatus | None:
         alias = raw.strip().lower()
@@ -322,7 +367,7 @@ class BuyoutFlowService:
         merged["_prefs"] = prefs
         return merged
 
-    async def _hydrate_preferences(self, session: UserSession) -> None:
+    async def _hydrate_preferences(self, session: UserSession, *, persist: bool = True) -> None:
         if session.state_data.get("_prefs_loaded"):
             return
         prefs = self._get_preferences(session)
@@ -338,7 +383,8 @@ class BuyoutFlowService:
         merged = self._merge_preferences(session.state_data, prefs)
         merged["_prefs_loaded"] = True
         session.state_data = merged
-        await self._sessions.save(session)
+        if persist:
+            await self._sessions.save(session)
 
     async def _save_order_media_items(self, order_id: int, raw_items: object) -> None:
         if not isinstance(raw_items, list):

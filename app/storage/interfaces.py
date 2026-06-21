@@ -127,7 +127,11 @@ class BuyoutOrderRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def count_for_user(self, user_profile_id: int) -> int:
+    async def count_for_user(
+        self,
+        user_profile_id: int,
+        statuses: list[str] | None = None,
+    ) -> int:
         raise NotImplementedError
 
     @abstractmethod

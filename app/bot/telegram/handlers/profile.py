@@ -17,7 +17,7 @@ from app.bot.telegram.keyboards.profile import (
     track_continue_keyboard,
     track_mode_keyboard,
 )
-from app.bot.telegram.my_orders_media import present_my_orders_panel
+from app.bot.telegram.my_orders_media import open_my_orders_panel
 from app.bot.texts import messages as msg
 from app.core.container import AppContainer
 from app.domain.enums import DialogState, Platform
@@ -190,19 +190,35 @@ def build_profile_router(container: AppContainer) -> Router:
             return track_continue_keyboard(user_id, callback_codec)
         return None
 
+    async def _my_orders_reply_markup(user_id: int, session, response) -> object | None:
+        if not response.state_data:
+            return None
+        filters = container.buyout_flow.filter_states(session)
+        return my_orders_message_keyboard(
+            user_id=user_id,
+            current_page=int(response.state_data.get("page", 1)),
+            total_pages=int(response.state_data.get("total_pages", 1)),
+            filters=filters,
+            codec=callback_codec,
+        )
+
     @router.message(F.text.in_({"Профиль", "👤 Профиль"}))
     async def profile_menu(message: Message) -> None:
         if not message.from_user:
             return
-        profile = await container.profile_repo.get_by_platform_user(platform, message.from_user.id)
+        profile, existing_session = await asyncio.gather(
+            container.profile_repo.get_by_platform_user(platform, message.from_user.id),
+            container.session_repo.get(platform, message.from_user.id),
+        )
         if profile and profile.is_blocked_by_admin:
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
         session, is_admin = await asyncio.gather(
-            container.profile_flow.get_or_create_session(
+            container.profile_flow.ensure_session(
                 platform,
                 message.from_user.id,
                 known_profile=profile,
+                existing_session=existing_session,
             ),
             container.admin_service.is_admin(message.from_user.id),
         )
@@ -335,48 +351,28 @@ def build_profile_router(container: AppContainer) -> Router:
             await _apply_response(callback.message, response, edit=True)
             return
         if action == "profile:buyout_orders":
-            await container.buyout_flow.prepare_preferences(session)
-            response = await container.buyout_flow.render_orders(session, page=1)
-            if response.state_data:
-                filters = container.buyout_flow.filter_states(session)
-                response.reply_markup = my_orders_message_keyboard(
-                    user_id=callback.from_user.id,
-                    current_page=int(response.state_data.get("page", 1)),
-                    total_pages=int(response.state_data.get("total_pages", 1)),
-                    filters=filters,
-                    codec=callback_codec,
-                )
             await callback.answer()
-            await present_my_orders_panel(
+            await open_my_orders_panel(
                 callback.message,
                 session,
                 container,
-                text=response.text,
-                order_media_groups=response.order_media_groups,
-                reply_markup=response.reply_markup,
+                container.buyout_flow,
+                page=1,
+                user_id=callback.from_user.id,
+                build_reply_markup=_my_orders_reply_markup,
                 replace_message=True,
             )
             return
         if action == "profile:buyout_filters":
-            await container.buyout_flow.prepare_preferences(session)
-            response = await container.buyout_flow.render_orders(session, page=1)
-            if response.state_data:
-                filters = container.buyout_flow.filter_states(session)
-                response.reply_markup = my_orders_message_keyboard(
-                    user_id=callback.from_user.id,
-                    current_page=int(response.state_data.get("page", 1)),
-                    total_pages=int(response.state_data.get("total_pages", 1)),
-                    filters=filters,
-                    codec=callback_codec,
-                )
             await callback.answer()
-            await present_my_orders_panel(
+            await open_my_orders_panel(
                 callback.message,
                 session,
                 container,
-                text=response.text,
-                order_media_groups=response.order_media_groups,
-                reply_markup=response.reply_markup,
+                container.buyout_flow,
+                page=1,
+                user_id=callback.from_user.id,
+                build_reply_markup=_my_orders_reply_markup,
                 replace_message=True,
             )
             return

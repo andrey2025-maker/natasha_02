@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from html import escape
 import re
 from datetime import datetime
@@ -17,7 +18,7 @@ from app.bot.telegram.keyboards.profile import (
     main_menu_keyboard,
     my_orders_message_keyboard,
 )
-from app.bot.telegram.my_orders_media import present_my_orders_panel
+from app.bot.telegram.my_orders_media import open_my_orders_panel
 from app.core.container import AppContainer
 from app.domain.enums import DialogState, OrderStatus, Platform
 from app.domain.models import OutboundMessage
@@ -89,23 +90,23 @@ def build_buyout_router(container: AppContainer) -> Router:
             codec=callback_codec,
         )
 
-    async def _present_my_orders(
+    async def _open_my_orders(
         message: Message,
         session,
-        response: BuyoutFlowResponse,
         *,
+        page: int = 1,
         replace_message: bool = False,
     ) -> None:
-        reply_markup = response.reply_markup
-        if reply_markup is None and response.state_data:
-            reply_markup = await _orders_reply_markup(message.from_user.id, session, response)
-        await present_my_orders_panel(
+        if not message.from_user:
+            return
+        await open_my_orders_panel(
             message,
             session,
             container,
-            text=response.text,
-            order_media_groups=response.order_media_groups,
-            reply_markup=reply_markup,
+            container.buyout_flow,
+            page=page,
+            user_id=message.from_user.id,
+            build_reply_markup=_orders_reply_markup,
             replace_message=replace_message,
         )
 
@@ -116,11 +117,17 @@ def build_buyout_router(container: AppContainer) -> Router:
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
-        await container.buyout_flow.prepare_preferences(session)
-        response = await container.buyout_flow.render_orders(session, page=1)
-        response.reply_markup = await _orders_reply_markup(message.from_user.id, session, response)
-        await _present_my_orders(message, session, response)
+        profile, existing_session = await asyncio.gather(
+            container.profile_repo.get_by_platform_user(platform, message.from_user.id),
+            container.session_repo.get(platform, message.from_user.id),
+        )
+        session = await container.profile_flow.ensure_session(
+            platform,
+            message.from_user.id,
+            known_profile=profile,
+            existing_session=existing_session,
+        )
+        await _open_my_orders(message, session, page=1)
 
     @router.message(F.text.in_({"Фильтры заказов", "🎛 Фильтры заказов"}))
     async def show_filters(message: Message) -> None:
@@ -129,11 +136,17 @@ def build_buyout_router(container: AppContainer) -> Router:
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
-        await container.buyout_flow.prepare_preferences(session)
-        response = await container.buyout_flow.render_orders(session, page=1)
-        response.reply_markup = await _orders_reply_markup(message.from_user.id, session, response)
-        await _present_my_orders(message, session, response)
+        profile, existing_session = await asyncio.gather(
+            container.profile_repo.get_by_platform_user(platform, message.from_user.id),
+            container.session_repo.get(platform, message.from_user.id),
+        )
+        session = await container.profile_flow.ensure_session(
+            platform,
+            message.from_user.id,
+            known_profile=profile,
+            existing_session=existing_session,
+        )
+        await _open_my_orders(message, session, page=1)
 
     @router.callback_query()
     async def my_orders_pagination(callback: CallbackQuery) -> None:
@@ -734,21 +747,11 @@ def build_buyout_router(container: AppContainer) -> Router:
                 await container.buyout_flow.toggle_status_filter(session, status)
             page_match = re.search(r"Страница (\d+)/", callback.message.text or callback.message.caption or "")
             page = int(page_match.group(1)) if page_match else 1
-            response = await container.buyout_flow.render_orders(session, page=page)
-            filters = container.buyout_flow.filter_states(session)
-            reply_markup = my_orders_message_keyboard(
-                user_id=callback.from_user.id,
-                current_page=int(response.state_data.get("page", 1)),
-                total_pages=int(response.state_data.get("total_pages", 1)),
-                filters=filters,
-                codec=callback_codec,
-            )
             await callback.answer("Фильтр обновлен")
-            response.reply_markup = reply_markup
-            await _present_my_orders(
+            await _open_my_orders(
                 callback.message,
                 session,
-                response,
+                page=page,
                 replace_message=True,
             )
             return
@@ -761,21 +764,11 @@ def build_buyout_router(container: AppContainer) -> Router:
             await callback.answer()
             return
         session = await container.profile_flow.get_or_create_session(platform, callback.from_user.id)
-        await container.buyout_flow.prepare_preferences(session)
-        response = await container.buyout_flow.render_orders(session, page=page)
-        filters = container.buyout_flow.filter_states(session)
-        response.reply_markup = my_orders_message_keyboard(
-            user_id=callback.from_user.id,
-            current_page=int(response.state_data.get("page", 1)),
-            total_pages=int(response.state_data.get("total_pages", 1)),
-            filters=filters,
-            codec=callback_codec,
-        )
         await callback.answer()
-        await _present_my_orders(
+        await _open_my_orders(
             callback.message,
             session,
-            response,
+            page=page,
             replace_message=True,
         )
 
