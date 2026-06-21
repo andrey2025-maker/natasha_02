@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import Any
 
 from aiogram import Bot
-from aiogram.types import Message
+from aiogram.types import Message, MessageId
 
 from app.bot.telegram.handlers.questions_topic import mirror_bot_message_to_dialog_topic
 from app.core.container import AppContainer
 from app.services.admin_tools_service import GroupTopicsStore, NotificationSettingsStore, TopicDialogStore
+
+_dialog_mirror_skip: ContextVar[bool] = ContextVar("dialog_mirror_skip", default=False)
+_in_callback_handler: ContextVar[bool] = ContextVar("dialog_mirror_in_callback", default=False)
 
 _OUTGOING_CHAT_ID_METHODS = (
     "send_message",
@@ -27,6 +32,31 @@ _OUTGOING_CHAT_ID_METHODS = (
     "copy_message",
     "forward_message",
 )
+
+
+def dialog_mirror_skipped() -> bool:
+    return _dialog_mirror_skip.get()
+
+
+def in_callback_handler() -> bool:
+    return _in_callback_handler.get()
+
+
+def set_callback_handler_flag(value: bool) -> ContextVar[bool].Token:
+    return _in_callback_handler.set(value)
+
+
+def reset_callback_handler_flag(token: ContextVar[bool].Token) -> None:
+    _in_callback_handler.reset(token)
+
+
+@asynccontextmanager
+async def skip_dialog_mirror():
+    token = _dialog_mirror_skip.set(True)
+    try:
+        yield
+    finally:
+        _dialog_mirror_skip.reset(token)
 
 
 class DialogMirrorBot(Bot):
@@ -51,8 +81,29 @@ class DialogMirrorBot(Bot):
             await self._mirror_outgoing(chat_id, sent)
         return messages
 
-    async def _mirror_outgoing(self, chat_id: int | str, sent: Message | None) -> None:
-        if sent is None:
+    async def copy_messages(
+        self,
+        chat_id: int | str,
+        from_chat_id: int | str,
+        message_ids: list[int],
+        **kwargs: Any,
+    ) -> list[MessageId]:
+        copied = await super().copy_messages(chat_id, from_chat_id, message_ids, **kwargs)
+        for item in copied:
+            await self._mirror_outgoing(chat_id, item)
+        return copied
+
+    async def mirror_private_chat_message(self, chat_id: int, message_id: int) -> None:
+        await self._mirror_outgoing(chat_id, message_id=message_id)
+
+    async def _mirror_outgoing(
+        self,
+        chat_id: int | str,
+        sent: Message | MessageId | None = None,
+        *,
+        message_id: int | None = None,
+    ) -> None:
+        if dialog_mirror_skipped():
             return
         try:
             target_chat_id = int(chat_id)
@@ -60,10 +111,17 @@ class DialogMirrorBot(Bot):
             return
         if target_chat_id <= 0:
             return
+
+        resolved_message_id = message_id
+        if resolved_message_id is None and sent is not None:
+            resolved_message_id = int(sent.message_id)
+        if resolved_message_id is None:
+            return
+
         await mirror_bot_message_to_dialog_topic(
             self,
             user_chat_id=target_chat_id,
-            message_id=int(sent.message_id),
+            message_id=int(resolved_message_id),
             container=self._mirror_container,
             group_topics_store=self._group_topics_store,
             notification_settings_store=self._notification_settings_store,
@@ -76,7 +134,7 @@ def _wrap_outgoing_method(method_name: str) -> None:
 
     async def wrapped(self: DialogMirrorBot, chat_id: int | str, /, *args: Any, **kwargs: Any) -> Any:
         result = await original(self, chat_id, *args, **kwargs)
-        await self._mirror_outgoing(chat_id, result if isinstance(result, Message) else None)
+        await self._mirror_outgoing(chat_id, result if isinstance(result, (Message, MessageId)) else None)
         return result
 
     setattr(DialogMirrorBot, method_name, wrapped)

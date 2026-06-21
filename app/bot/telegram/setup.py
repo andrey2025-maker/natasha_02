@@ -8,7 +8,10 @@ from app.bot.telegram.handlers.buyout import build_buyout_router
 from app.bot.telegram.handlers.profile import build_profile_router
 from app.bot.telegram.handlers.questions import build_questions_router
 from app.bot.telegram.handlers.start import build_start_router
-from app.bot.telegram.middleware.dialog_mirror import DialogMirrorMiddleware
+from app.bot.telegram.middleware.dialog_mirror import (
+    DialogMirrorCallbackAfterMiddleware,
+    DialogMirrorIncomingMiddleware,
+)
 from app.bot.telegram.mirror_bot import DialogMirrorBot
 from app.core.container import AppContainer
 
@@ -20,7 +23,8 @@ def build_telegram_bot_and_dispatcher(container: AppContainer) -> tuple[DialogMi
         default=TELEGRAM_BOT_DEFAULTS,
     )
     dispatcher = Dispatcher()
-    dispatcher.message.outer_middleware(DialogMirrorMiddleware(container))
+    dispatcher.message.outer_middleware(DialogMirrorIncomingMiddleware(container))
+    dispatcher.callback_query.middleware(DialogMirrorCallbackAfterMiddleware())
     dispatcher.include_router(build_start_router(container))
     dispatcher.include_router(build_questions_router(container))
     dispatcher.include_router(build_buyout_router(container))

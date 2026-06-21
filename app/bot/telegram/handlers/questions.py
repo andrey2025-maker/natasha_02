@@ -5,10 +5,11 @@ from html import escape
 from aiogram import F, Router
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.exceptions import TelegramForbiddenError
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, ReactionTypeEmoji
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
 from app.bot.telegram.callback_panel import edit_content_with_media, edit_panel_message
+from app.bot.telegram.mirror_bot import skip_dialog_mirror
 from app.core.container import AppContainer
 from app.domain.enums import Platform
 from app.services.admin_tools_service import (
@@ -338,20 +339,21 @@ async def _relay_topic_reply_to_user(
     if platform != Platform.TELEGRAM.value:
         return False
     try:
-        if as_media:
-            await message.bot.copy_message(
-                chat_id=target_user_id,
-                from_chat_id=message.chat.id,
-                message_id=message.message_id,
-            )
-        else:
-            text = message.text or ""
-            if not text.strip():
-                return False
-            await message.bot.send_message(
-                chat_id=target_user_id,
-                text=f"💬 Ответ менеджера:\n\n{text}",
-            )
+        async with skip_dialog_mirror():
+            if as_media:
+                await message.bot.copy_message(
+                    chat_id=target_user_id,
+                    from_chat_id=message.chat.id,
+                    message_id=message.message_id,
+                )
+            else:
+                text = message.text or ""
+                if not text.strip():
+                    return False
+                await message.bot.send_message(
+                    chat_id=target_user_id,
+                    text=text,
+                )
     except Exception as exc:
         await _mark_blocked_bot_if_needed(container, target_user_id, exc)
         return False
@@ -362,8 +364,20 @@ async def _relay_topic_reply_to_user(
         platform=Platform.TELEGRAM.value,
         platform_user_id=target_user_id,
     )
-    await message.reply("✅ Отправлено клиенту")
+    if message.reply_to_message:
+        await _mark_relay_delivered_in_topic(message)
     return True
+
+
+async def _mark_relay_delivered_in_topic(message: Message) -> None:
+    try:
+        await message.bot.set_message_reaction(
+            chat_id=int(message.chat.id),
+            message_id=int(message.message_id),
+            reaction=[ReactionTypeEmoji(emoji="👍")],
+        )
+    except Exception:
+        return
 
 
 async def _mark_blocked_bot_if_needed(container: AppContainer, telegram_user_id: int, error: Exception) -> None:

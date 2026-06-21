@@ -3,11 +3,22 @@ from __future__ import annotations
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import Message
 
+from app.bot.telegram.mirror_bot import DialogMirrorBot, in_callback_handler
 from app.services.admin_tools_service import send_content_with_media_to_telegram
 
 
 def message_has_media(message: Message) -> bool:
     return bool(message.photo or message.video or message.animation or message.document)
+
+
+async def _mirror_private_panel_message(message: Message) -> None:
+    if in_callback_handler():
+        return
+    if message.chat.type != "private":
+        return
+    bot = message.bot
+    if isinstance(bot, DialogMirrorBot):
+        await bot.mirror_private_chat_message(int(message.chat.id), int(message.message_id))
 
 
 async def edit_panel_message(
@@ -30,6 +41,7 @@ async def edit_panel_message(
                 parse_mode=parse_mode,
                 reply_markup=reply_markup,
             )
+        await _mirror_private_panel_message(message)
         return
     except TelegramBadRequest as exc:
         error_text = str(exc).lower()
@@ -73,6 +85,7 @@ async def edit_content_with_media(
                 parse_mode=parse_mode,
                 reply_markup=reply_markup,
             )
+            await _mirror_private_panel_message(message)
             return
         except TelegramBadRequest as exc:
             error_text = str(exc).lower()
