@@ -94,7 +94,7 @@ def register_block_callbacks(router: Router, ctx: AdminContext) -> None:
             profile = await container.admin_service.get_profile(code)
             if not profile:
                 return
-            await _refresh_group_topic_profile(callback.message.bot, container=container, profile=profile)
+            _refresh_group_topic_profile(callback.message.bot, container=container, profile=profile)
             block_reason = await block_reason_store.get_reason(profile.code)
             profile_comment = await profile_comment_store.get_comment(profile.code)
             await callback.message.edit_text(

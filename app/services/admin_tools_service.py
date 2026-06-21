@@ -874,6 +874,94 @@ class TopicDialogStore:
         platform: str,
         platform_user_id: int,
     ) -> None:
+        if self.database_dsn == "memory":
+            await self._bind_topic_message_to_user_memory(
+                chat_id,
+                topic_id,
+                topic_message_id,
+                platform,
+                platform_user_id,
+            )
+            return
+
+        normalized_topic_id = int(topic_id) if topic_id else 0
+        pool = await self._db._pool()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    """
+                    INSERT INTO topic_dialog_message_links (
+                        chat_id, topic_id, topic_message_id, platform, platform_user_id
+                    )
+                    VALUES ($1, $2, $3, $4, $5)
+                    ON CONFLICT (chat_id, topic_id, topic_message_id) DO UPDATE
+                    SET platform = EXCLUDED.platform,
+                        platform_user_id = EXCLUDED.platform_user_id,
+                        created_at = NOW()
+                    """,
+                    int(chat_id),
+                    normalized_topic_id,
+                    int(topic_message_id),
+                    str(platform).strip().lower(),
+                    int(platform_user_id),
+                )
+                await conn.execute(
+                    """
+                    DELETE FROM topic_dialog_message_links
+                    WHERE id IN (
+                        SELECT id
+                        FROM topic_dialog_message_links
+                        WHERE chat_id = $1 AND topic_id = $2
+                        ORDER BY topic_message_id DESC
+                        OFFSET 500
+                    )
+                    """,
+                    int(chat_id),
+                    normalized_topic_id,
+                )
+
+    async def resolve_user_by_topic_message(
+        self,
+        chat_id: int,
+        topic_id: int | None,
+        topic_message_id: int,
+    ) -> tuple[str, int] | None:
+        if self.database_dsn == "memory":
+            return await self._resolve_user_by_topic_message_memory(
+                chat_id,
+                topic_id,
+                topic_message_id,
+            )
+
+        normalized_topic_id = int(topic_id) if topic_id else 0
+        pool = await self._db._pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT platform, platform_user_id
+                FROM topic_dialog_message_links
+                WHERE chat_id = $1 AND topic_id = $2 AND topic_message_id = $3
+                """,
+                int(chat_id),
+                normalized_topic_id,
+                int(topic_message_id),
+            )
+        if not row:
+            return None
+        platform = str(row["platform"]).strip().lower()
+        user_id = int(row["platform_user_id"])
+        if not platform or user_id <= 0:
+            return None
+        return platform, user_id
+
+    async def _bind_topic_message_to_user_memory(
+        self,
+        chat_id: int,
+        topic_id: int | None,
+        topic_message_id: int,
+        platform: str,
+        platform_user_id: int,
+    ) -> None:
         payload = await self._db.get("topic_dialog_links") or {}
         topic_key = self._topic_key(chat_id, topic_id)
         topic_payload = payload.get(topic_key)
@@ -883,7 +971,6 @@ class TopicDialogStore:
             "platform": platform,
             "platform_user_id": int(platform_user_id),
         }
-        # Keep links compact per topic.
         if len(topic_payload) > 500:
             keys = sorted(topic_payload.keys(), key=lambda item: int(item))
             for stale in keys[:-500]:
@@ -891,7 +978,7 @@ class TopicDialogStore:
         payload[topic_key] = topic_payload
         await self._db.set("topic_dialog_links", payload)
 
-    async def resolve_user_by_topic_message(
+    async def _resolve_user_by_topic_message_memory(
         self,
         chat_id: int,
         topic_id: int | None,

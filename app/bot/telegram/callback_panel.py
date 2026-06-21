@@ -18,7 +18,7 @@ async def _mirror_private_panel_message(message: Message) -> None:
         return
     bot = message.bot
     if isinstance(bot, DialogMirrorBot):
-        await bot.mirror_private_chat_message(int(message.chat.id), int(message.message_id))
+        bot.schedule_outgoing_mirror(int(message.chat.id), message_id=int(message.message_id))
 
 
 async def edit_panel_message(

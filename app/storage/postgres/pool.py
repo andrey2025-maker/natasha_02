@@ -18,6 +18,9 @@ async def init_schema(pool: asyncpg.Pool) -> None:
     sql = SCHEMA_PATH.read_text(encoding="utf-8")
     async with pool.acquire() as conn:
         await conn.execute(sql)
+    from app.storage.postgres.migrate_topic_dialog_links import migrate_topic_dialog_links_from_settings
+
+    await migrate_topic_dialog_links_from_settings(pool)
 
 
 def dumps_state_data(data: dict) -> str:

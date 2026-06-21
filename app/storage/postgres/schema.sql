@@ -136,3 +136,20 @@ CREATE TABLE IF NOT EXISTS app_settings (
     value JSONB NOT NULL DEFAULT '{}',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS topic_dialog_message_links (
+    id BIGSERIAL PRIMARY KEY,
+    chat_id BIGINT NOT NULL,
+    topic_id BIGINT NOT NULL DEFAULT 0,
+    topic_message_id BIGINT NOT NULL,
+    platform VARCHAR(16) NOT NULL,
+    platform_user_id BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (chat_id, topic_id, topic_message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_topic_dialog_message_links_lookup
+    ON topic_dialog_message_links (chat_id, topic_id, topic_message_id);
+
+CREATE INDEX IF NOT EXISTS idx_topic_dialog_message_links_topic
+    ON topic_dialog_message_links (chat_id, topic_id, topic_message_id DESC);

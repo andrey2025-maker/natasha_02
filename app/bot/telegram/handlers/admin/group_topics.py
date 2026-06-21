@@ -7,24 +7,33 @@ from app.core.container import AppContainer
 from app.domain.enums import Platform
 from app.domain.models import UserProfile
 from app.services.admin_tools_service import GroupTopicsStore, TopicDialogStore
-from app.services.dialog_topic_profile_sync import refresh_dialog_topic_profile
+from app.services.dialog_topic_profile_sync import schedule_refresh_dialog_topic_profile
 
-async def _refresh_group_topic_profile(
+
+def _refresh_group_topic_profile(
     bot,
     *,
     container: AppContainer,
     profile: UserProfile | None = None,
     tg_user_id: int | None = None,
+    group_topics_store: GroupTopicsStore | None = None,
+    topic_dialog_store: TopicDialogStore | None = None,
+    is_admin: bool | None = None,
+    immediate: bool = True,
 ) -> None:
     target_id = tg_user_id
     if target_id is None and profile is not None:
         target_id = profile.telegram_user_id
     if not target_id:
         return
-    await refresh_dialog_topic_profile(
+    schedule_refresh_dialog_topic_profile(
         bot,
         container=container,
         tg_user_id=int(target_id),
+        group_topics_store=group_topics_store,
+        topic_dialog_store=topic_dialog_store,
+        is_admin=is_admin,
+        immediate=immediate,
     )
 
 
@@ -112,13 +121,14 @@ async def _provision_topics_for_existing_telegram_profiles(
             )
             if topic_id:
                 created_count += 1
-                await refresh_dialog_topic_profile(
+                schedule_refresh_dialog_topic_profile(
                     bot,
                     container=container,
                     tg_user_id=tg_user_id,
                     group_topics_store=group_topics_store,
                     topic_dialog_store=topic_dialog_store,
                     is_admin=False,
+                    immediate=False,
                 )
             else:
                 failed_count += 1
@@ -152,13 +162,14 @@ async def _provision_topics_for_existing_telegram_profiles(
         )
         if topic_id:
             created_count += 1
-            await refresh_dialog_topic_profile(
+            schedule_refresh_dialog_topic_profile(
                 bot,
                 container=container,
                 tg_user_id=tg_user_id,
                 group_topics_store=group_topics_store,
                 topic_dialog_store=topic_dialog_store,
                 is_admin=admin_topic,
+                immediate=False,
             )
         else:
             failed_count += 1

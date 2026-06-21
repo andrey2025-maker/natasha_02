@@ -19,8 +19,10 @@ from app.services.admin_tools_service import (
 )
 from app.services.dialog_topic_profile_sync import (
     build_topic_name_from_profile,
-    refresh_dialog_topic_profile,
+    schedule_refresh_dialog_topic_profile,
 )
+
+DialogMirrorResult = tuple[int, int, int]
 
 
 def build_tg_forum_message_link(chat_id: int, message_id: int, topic_id: int | None) -> str:
@@ -193,16 +195,6 @@ async def forward_message_to_dialog_topic(
     if not dialog_topic_id:
         return None
 
-    await refresh_dialog_topic_profile(
-        message.bot,
-        container=container,
-        tg_user_id=message.from_user.id,
-        group_topics_store=group_topics_store,
-        topic_dialog_store=topic_dialog_store,
-        notification_settings_store=notification_settings_store,
-        is_admin=admin_topic,
-    )
-
     notify_kind = "button" if is_admin else "user"
     disable_notification = await notification_settings_store.should_disable_notification(notify_kind)
     try:
@@ -223,6 +215,15 @@ async def forward_message_to_dialog_topic(
         topic_message_id=int(dialog_copy.message_id),
         platform=Platform.TELEGRAM.value,
         platform_user_id=message.from_user.id,
+    )
+    schedule_refresh_dialog_topic_profile(
+        message.bot,
+        container=container,
+        tg_user_id=message.from_user.id,
+        group_topics_store=group_topics_store,
+        topic_dialog_store=topic_dialog_store,
+        notification_settings_store=notification_settings_store,
+        is_admin=admin_topic,
     )
     return int(logs_chat_id), int(dialog_topic_id), int(dialog_copy.message_id)
 
@@ -261,16 +262,6 @@ async def mirror_bot_message_to_dialog_topic(
     if not dialog_topic_id:
         return None
 
-    await refresh_dialog_topic_profile(
-        bot,
-        container=container,
-        tg_user_id=tg_user_id,
-        group_topics_store=group_topics_store,
-        topic_dialog_store=topic_dialog_store,
-        notification_settings_store=notification_settings_store,
-        is_admin=admin_topic,
-    )
-
     notify_kind = "button" if user_is_admin else "user"
     disable_notification = await notification_settings_store.should_disable_notification(notify_kind)
     try:
@@ -291,6 +282,15 @@ async def mirror_bot_message_to_dialog_topic(
         topic_message_id=int(dialog_copy.message_id),
         platform=Platform.TELEGRAM.value,
         platform_user_id=tg_user_id,
+    )
+    schedule_refresh_dialog_topic_profile(
+        bot,
+        container=container,
+        tg_user_id=tg_user_id,
+        group_topics_store=group_topics_store,
+        topic_dialog_store=topic_dialog_store,
+        notification_settings_store=notification_settings_store,
+        is_admin=admin_topic,
     )
     return int(logs_chat_id), int(dialog_topic_id), int(dialog_copy.message_id)
 

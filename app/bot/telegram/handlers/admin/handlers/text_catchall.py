@@ -328,7 +328,7 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
             block_reason = await block_reason_store.get_reason(profile.code)
             profile_comment = await profile_comment_store.get_comment(profile.code)
             await message.answer(answer_text)
-            await _refresh_group_topic_profile(message.bot, container=container, profile=profile)
+            _refresh_group_topic_profile(message.bot, container=container, profile=profile)
             await message.answer(
                 _profile_details(profile, block_reason=block_reason, profile_comment=profile_comment),
                 parse_mode="HTML",
@@ -345,9 +345,9 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
             utils_state["awaiting_profile_comment_code"] = None
             await _save_admin_utils_state(container, session, utils_state)
             profile = await container.profile_repo.get_by_code(profile_comment_code)
-            if profile:
-                await _refresh_group_topic_profile(message.bot, container=container, profile=profile)
             await message.answer("Комментарий профиля обновлен.")
+            if profile:
+                _refresh_group_topic_profile(message.bot, container=container, profile=profile)
             return
 
         if utils_state.get("awaiting_admin_add_id"):
@@ -463,9 +463,9 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
             utils_state["awaiting_block_reason_for_code"] = None
             await _save_admin_utils_state(container, session, utils_state)
             profile = await container.profile_repo.get_by_code(block_reason_code)
-            if profile:
-                await _refresh_group_topic_profile(message.bot, container=container, profile=profile)
             await message.answer("Пользователь заблокирован.")
+            if profile:
+                _refresh_group_topic_profile(message.bot, container=container, profile=profile)
             return
 
         if utils_state.get("awaiting_backup_target"):

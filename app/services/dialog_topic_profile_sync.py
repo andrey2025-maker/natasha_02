@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
 from html import escape
 
 from app.core.container import AppContainer
@@ -11,6 +14,12 @@ from app.services.admin_tools_service import (
     NotificationSettingsStore,
     TopicDialogStore,
 )
+from app.bot.telegram.topic_profile_refresh_debouncer import (
+    DEFAULT_DEBOUNCE_SECONDS,
+    TopicProfileRefreshRequest,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def _h(value: object) -> str:
@@ -240,3 +249,107 @@ async def refresh_dialog_topic_profile(
         )
     except Exception:
         pass
+
+
+def schedule_refresh_dialog_topic_profile(
+    bot,
+    *,
+    container: AppContainer,
+    tg_user_id: int,
+    group_topics_store: GroupTopicsStore | None = None,
+    topic_dialog_store: TopicDialogStore | None = None,
+    profile_comment_store: AdminProfileCommentStore | None = None,
+    notification_settings_store: NotificationSettingsStore | None = None,
+    is_admin: bool | None = None,
+    immediate: bool = False,
+) -> None:
+    """Обновляет карточку профиля в теме диалога в фоне, не блокируя ответ пользователю."""
+    if tg_user_id <= 0:
+        return
+
+    request = TopicProfileRefreshRequest(
+        bot=bot,
+        container=container,
+        tg_user_id=int(tg_user_id),
+        group_topics_store=group_topics_store,
+        topic_dialog_store=topic_dialog_store,
+        profile_comment_store=profile_comment_store,
+        notification_settings_store=notification_settings_store,
+        is_admin=is_admin,
+    )
+
+    debouncer = _resolve_topic_profile_debouncer(bot)
+    if debouncer is not None:
+        debouncer.schedule(request, immediate=immediate)
+        return
+
+    async def job() -> None:
+        await refresh_dialog_topic_profile(
+            bot,
+            container=container,
+            tg_user_id=int(tg_user_id),
+            group_topics_store=group_topics_store,
+            topic_dialog_store=topic_dialog_store,
+            profile_comment_store=profile_comment_store,
+            notification_settings_store=notification_settings_store,
+            is_admin=is_admin,
+        )
+
+    if immediate:
+        task = asyncio.create_task(
+            _run_refresh_job(job, int(tg_user_id)),
+            name=f"topic-profile-refresh-{int(tg_user_id)}",
+        )
+        task.add_done_callback(_log_refresh_task_failure)
+        return
+
+    asyncio.create_task(
+        _run_debounced_fallback(job, int(tg_user_id), delay_seconds=DEFAULT_DEBOUNCE_SECONDS),
+        name=f"topic-profile-refresh-debounce-{int(tg_user_id)}",
+    )
+
+
+async def _run_refresh_job(job: Callable[[], Awaitable[None]], tg_user_id: int) -> None:
+    try:
+        await job()
+    except Exception:
+        logger.exception("Background topic profile refresh failed (chat_id=%s)", tg_user_id)
+
+
+async def _run_debounced_fallback(
+    job: Callable[[], Awaitable[None]],
+    tg_user_id: int,
+    *,
+    delay_seconds: float,
+) -> None:
+    try:
+        await asyncio.sleep(delay_seconds)
+        await _run_refresh_job(job, tg_user_id)
+    except asyncio.CancelledError:
+        return
+
+
+def _resolve_mirror_scheduler(bot):
+    from app.bot.telegram.mirror_bot import DialogMirrorBot
+
+    if isinstance(bot, DialogMirrorBot):
+        return bot.mirror_scheduler
+    return None
+
+
+def _resolve_topic_profile_debouncer(bot):
+    scheduler = _resolve_mirror_scheduler(bot)
+    if scheduler is not None:
+        return scheduler.topic_profile_debouncer
+    return None
+
+
+def _log_refresh_task_failure(task: asyncio.Task[None]) -> None:
+    if task.cancelled():
+        return
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        return
+    if exc is not None:
+        logger.error("Topic profile refresh task failed: %s", exc, exc_info=exc)

@@ -23,7 +23,7 @@ from app.domain.enums import DialogState, Platform
 from app.domain.models import BuyoutOrder, OutboundMessage
 from app.services.admin_tools_service import GroupTopicsStore, NotificationSettingsStore, TopicDialogStore
 from app.bot.telegram.handlers.admin import admin_session_has_pending, clear_admin_input_states
-from app.services.dialog_topic_profile_sync import refresh_dialog_topic_profile
+from app.services.dialog_topic_profile_sync import schedule_refresh_dialog_topic_profile
 
 
 PROFILE_BUTTONS = {"Профиль", "👤 Профиль", "Заполнить профиль"}
@@ -70,7 +70,7 @@ def build_profile_router(container: AppContainer) -> Router:
         if not isinstance(text, str):
             profile = getattr(response, "profile", None)
             if profile is not None and getattr(profile, "telegram_user_id", None):
-                await refresh_dialog_topic_profile(
+                schedule_refresh_dialog_topic_profile(
                     message.bot,
                     container=container,
                     tg_user_id=int(profile.telegram_user_id),
@@ -93,7 +93,7 @@ def build_profile_router(container: AppContainer) -> Router:
             await message.answer(text, **kwargs)
         profile = getattr(response, "profile", None)
         if profile is not None and getattr(profile, "telegram_user_id", None):
-            await refresh_dialog_topic_profile(
+            schedule_refresh_dialog_topic_profile(
                 message.bot,
                 container=container,
                 tg_user_id=int(profile.telegram_user_id),
@@ -124,7 +124,7 @@ def build_profile_router(container: AppContainer) -> Router:
                     if profile and not profile.blocked_bot:
                         profile.blocked_bot = True
                         await container.profile_repo.save(profile)
-                        await refresh_dialog_topic_profile(
+                        schedule_refresh_dialog_topic_profile(
                             message.bot,
                             container=container,
                             tg_user_id=target_user_id,

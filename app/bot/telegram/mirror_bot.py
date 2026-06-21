@@ -7,6 +7,7 @@ from typing import Any
 from aiogram import Bot
 from aiogram.types import Message, MessageId
 
+from app.bot.telegram.dialog_mirror_scheduler import DialogMirrorScheduler
 from app.bot.telegram.handlers.questions_topic import mirror_bot_message_to_dialog_topic
 from app.core.container import AppContainer
 from app.services.admin_tools_service import GroupTopicsStore, NotificationSettingsStore, TopicDialogStore
@@ -62,13 +63,24 @@ async def skip_dialog_mirror():
 class DialogMirrorBot(Bot):
     """Bot, который дублирует исходящие сообщения в личные чаты в тему диалога."""
 
-    def __init__(self, *, container: AppContainer, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        container: AppContainer,
+        mirror_scheduler: DialogMirrorScheduler,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         dsn = container.settings.database.dsn
         self._mirror_container = container
+        self._mirror_scheduler = mirror_scheduler
         self._group_topics_store = GroupTopicsStore(dsn)
         self._notification_settings_store = NotificationSettingsStore(dsn)
         self._topic_dialog_store = TopicDialogStore(dsn)
+
+    @property
+    def mirror_scheduler(self) -> DialogMirrorScheduler:
+        return self._mirror_scheduler
 
     async def send_media_group(
         self,
@@ -78,10 +90,7 @@ class DialogMirrorBot(Bot):
     ) -> list[Message]:
         messages = await super().send_media_group(chat_id, media, **kwargs)
         for sent in messages:
-            try:
-                await self._mirror_outgoing(chat_id, sent)
-            except Exception:
-                pass
+            self._schedule_outgoing_mirror(chat_id, sent)
         return messages
 
     async def copy_messages(
@@ -93,16 +102,22 @@ class DialogMirrorBot(Bot):
     ) -> list[MessageId]:
         copied = await super().copy_messages(chat_id, from_chat_id, message_ids, **kwargs)
         for item in copied:
-            try:
-                await self._mirror_outgoing(chat_id, item)
-            except Exception:
-                pass
+            self._schedule_outgoing_mirror(chat_id, item)
         return copied
 
-    async def mirror_private_chat_message(self, chat_id: int, message_id: int) -> None:
-        await self._mirror_outgoing(chat_id, message_id=message_id)
+    def schedule_outgoing_mirror(
+        self,
+        chat_id: int | str,
+        sent: Message | MessageId | None = None,
+        *,
+        message_id: int | None = None,
+    ) -> None:
+        self._schedule_outgoing_mirror(chat_id, sent, message_id=message_id)
 
-    async def _mirror_outgoing(
+    def mirror_private_chat_message(self, chat_id: int, message_id: int) -> None:
+        self.schedule_outgoing_mirror(chat_id, message_id=message_id)
+
+    def _schedule_outgoing_mirror(
         self,
         chat_id: int | str,
         sent: Message | MessageId | None = None,
@@ -124,18 +139,24 @@ class DialogMirrorBot(Bot):
         if resolved_message_id is None:
             return
 
-        try:
+        resolved_id = int(resolved_message_id)
+
+        async def mirror_outgoing() -> None:
             await mirror_bot_message_to_dialog_topic(
                 self,
                 user_chat_id=target_chat_id,
-                message_id=int(resolved_message_id),
+                message_id=resolved_id,
                 container=self._mirror_container,
                 group_topics_store=self._group_topics_store,
                 notification_settings_store=self._notification_settings_store,
                 topic_dialog_store=self._topic_dialog_store,
             )
-        except Exception:
-            return
+
+        self._mirror_scheduler.submit_fire_and_forget(
+            target_chat_id,
+            mirror_outgoing,
+            label="outgoing",
+        )
 
 
 def _wrap_outgoing_method(method_name: str) -> None:
@@ -149,13 +170,10 @@ def _wrap_outgoing_method(method_name: str) -> None:
             chat_id = kwargs.get("chat_id")
             result = await original(self, **kwargs)
         if chat_id is not None:
-            try:
-                await self._mirror_outgoing(
-                    chat_id,
-                    result if isinstance(result, (Message, MessageId)) else None,
-                )
-            except Exception:
-                pass
+            self._schedule_outgoing_mirror(
+                chat_id,
+                result if isinstance(result, (Message, MessageId)) else None,
+            )
         return result
 
     setattr(DialogMirrorBot, method_name, wrapped)
