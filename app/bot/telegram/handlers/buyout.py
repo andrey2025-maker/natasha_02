@@ -271,9 +271,13 @@ def build_buyout_router(container: AppContainer) -> Router:
                 )
             elif response.state == DialogState.IDLE:
                 is_admin = await container.admin_service.is_admin(callback.from_user.id)
-                await edit_panel_message(
-                    callback.message,
-                    text=response.text,
+                try:
+                    await callback.message.delete()
+                except Exception:
+                    pass
+                await callback.message.answer(
+                    response.text,
+                    parse_mode="HTML",
                     reply_markup=main_menu_keyboard(include_admin=is_admin),
                 )
             else:

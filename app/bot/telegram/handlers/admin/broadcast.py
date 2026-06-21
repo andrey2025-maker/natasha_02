@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aiogram.types import Message
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.bot.telegram.callbacks import CallbackCodec
 from app.bot.telegram.handlers.admin.media_helpers import _mark_blocked_bot_if_needed
