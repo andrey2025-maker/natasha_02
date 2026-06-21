@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from app.bot.telegram.fsm_utils import admin_utils_has_waiter
-from app.bot.telegram.handlers.admin.orders import _get_admin_orders_state, _save_admin_orders_state
+from app.bot.telegram.handlers.admin.orders import (
+    _default_admin_order_status_filters,
+    _get_admin_orders_state,
+    _save_admin_orders_state,
+)
 from app.bot.telegram.handlers.content_utils_admin import reset_content_utils_state
 from app.bot.telegram.handlers.faq_admin import reset_faq_admin_state
 from app.bot.telegram.handlers.admin.tracks import (
@@ -217,13 +221,50 @@ def admin_session_has_pending(session) -> bool:
 
 
 async def clear_admin_input_states(container: AppContainer, session) -> None:
+    payload = dict(session.state_data)
+
     utils_state = _get_admin_utils_state(session)
     _reset_admin_utils_waiters(utils_state)
-    await _save_admin_utils_state(container, session, utils_state)
-    broadcast_state = _get_admin_broadcast_state(session)
-    broadcast_state["awaiting_payload"] = False
-    broadcast_state["audience"] = None
-    await _save_admin_broadcast_state(container, session, broadcast_state)
+    payload["_admin_utils"] = {
+        "awaiting_payment_text": bool(utils_state.get("awaiting_payment_text")),
+        "awaiting_payment_media": bool(utils_state.get("awaiting_payment_media")),
+        "awaiting_backup_target": bool(utils_state.get("awaiting_backup_target")),
+        "awaiting_payment_review_target": bool(utils_state.get("awaiting_payment_review_target")),
+        "awaiting_prohibited_text": bool(utils_state.get("awaiting_prohibited_text")),
+        "awaiting_prohibited_media": bool(utils_state.get("awaiting_prohibited_media")),
+        "awaiting_delivery_text": bool(utils_state.get("awaiting_delivery_text")),
+        "awaiting_delivery_media": bool(utils_state.get("awaiting_delivery_media")),
+        "awaiting_contacts_text": bool(utils_state.get("awaiting_contacts_text")),
+        "awaiting_contacts_media": bool(utils_state.get("awaiting_contacts_media")),
+        "awaiting_profile_search_query": bool(utils_state.get("awaiting_profile_search_query")),
+        "profile_search_mode": utils_state.get("profile_search_mode"),
+        "awaiting_block_search_query": bool(utils_state.get("awaiting_block_search_query")),
+        "block_search_mode": utils_state.get("block_search_mode"),
+        "block_operation": utils_state.get("block_operation"),
+        "awaiting_codes_add": bool(utils_state.get("awaiting_codes_add")),
+        "awaiting_codes_remove": bool(utils_state.get("awaiting_codes_remove")),
+        "awaiting_faq_media_section_id": utils_state.get("awaiting_faq_media_section_id"),
+        "faq_admin_screen": utils_state.get("faq_admin_screen"),
+        "faq_admin_nav_section_id": utils_state.get("faq_admin_nav_section_id"),
+        "faq_admin_pick_nav_section_id": utils_state.get("faq_admin_pick_nav_section_id"),
+        "faq_admin_target_section_id": utils_state.get("faq_admin_target_section_id"),
+        "faq_admin_panel_chat_id": utils_state.get("faq_admin_panel_chat_id"),
+        "faq_admin_panel_message_id": utils_state.get("faq_admin_panel_message_id"),
+        "content_utils_kind": utils_state.get("content_utils_kind"),
+        "content_utils_screen": utils_state.get("content_utils_screen"),
+        "content_utils_panel_chat_id": utils_state.get("content_utils_panel_chat_id"),
+        "content_utils_panel_message_id": utils_state.get("content_utils_panel_message_id"),
+        "awaiting_content_utils_media": utils_state.get("awaiting_content_utils_media"),
+        "awaiting_admin_add_id": bool(utils_state.get("awaiting_admin_add_id")),
+        "awaiting_admin_add_code": bool(utils_state.get("awaiting_admin_add_code")),
+        "awaiting_block_reason_for_code": utils_state.get("awaiting_block_reason_for_code"),
+        "awaiting_profile_comment_code": utils_state.get("awaiting_profile_comment_code"),
+        "awaiting_profile_edit_code": utils_state.get("awaiting_profile_edit_code"),
+        "awaiting_profile_edit_field": utils_state.get("awaiting_profile_edit_field"),
+    }
+
+    payload["_admin_broadcast"] = {"awaiting_payload": False, "audience": None}
+
     orders_state = _get_admin_orders_state(session)
     orders_state["edit_order"] = None
     orders_state["edit_field"] = None
@@ -232,10 +273,35 @@ async def clear_admin_input_states(container: AppContainer, session) -> None:
     orders_state["pending_value"] = None
     orders_state["awaiting_order_search_query"] = False
     orders_state["order_search_mode"] = None
-    await _save_admin_orders_state(container, session, orders_state)
+
+    payload["_admin_orders"] = {
+        "page": int(orders_state.get("page", 1)),
+        "selected": list(orders_state.get("selected", [])),
+        "edit_order": orders_state.get("edit_order"),
+        "edit_field": orders_state.get("edit_field"),
+        "bulk_field": orders_state.get("bulk_field"),
+        "pending_field": orders_state.get("pending_field"),
+        "pending_value": orders_state.get("pending_value"),
+        "status_filters": list(orders_state.get("status_filters") or _default_admin_order_status_filters()),
+        "awaiting_order_search_query": bool(orders_state.get("awaiting_order_search_query")),
+        "order_search_mode": orders_state.get("order_search_mode"),
+        "search_results": orders_state.get("search_results"),
+        "extra_media_message_ids": list(orders_state.get("extra_media_message_ids") or []),
+    }
+
     tracks_state = _get_admin_tracks_state(session)
     reset_admin_tracks_state(tracks_state)
-    await _save_admin_tracks_state(container, session, tracks_state)
+    payload["_admin_tracks"] = {
+        "awaiting_txt_file": bool(tracks_state.get("awaiting_txt_file")),
+        "awaiting_status_comment": bool(tracks_state.get("awaiting_status_comment")),
+        "uploaded_total": int(tracks_state.get("uploaded_total") or 0),
+        "matched_count": int(tracks_state.get("matched_count") or 0),
+        "matched_order_numbers": list(tracks_state.get("matched_order_numbers") or []),
+        "pending_status": tracks_state.get("pending_status"),
+    }
+
+    session.state_data = payload
+    await container.session_repo.save(session)
 
 
 async def _clear_admin_input_states(container: AppContainer, session) -> None:

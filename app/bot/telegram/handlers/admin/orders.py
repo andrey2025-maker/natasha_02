@@ -1,19 +1,24 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.bot.telegram.callbacks import CallbackCodec
 from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.handlers.admin.html import _h
 from app.bot.telegram.handlers.admin.media_helpers import _mark_blocked_bot_if_needed
-from app.bot.telegram.my_orders_media import present_admin_orders_panel
+from app.bot.telegram.my_orders_media import clear_admin_orders_extra_media, present_admin_orders_panel
 from app.core.container import AppContainer
 from app.domain.enums import OrderStatus, Platform
-from app.domain.models import OutboundMessage
+from app.domain.models import BuyoutOrder, OrderStatusHistoryItem, OutboundMessage
 from app.services.admin_tools_service import PaymentTextStore, send_stored_media_to_telegram
 from app.services.order_filter_config import DEFAULT_ORDER_FILTER_VALUES, ORDER_FILTER_STATUSES, order_filter_button_text
 from app.services.order_list_format import assemble_orders_panel_text, format_order_blockquote, order_status_title
 from app.services.order_media_utils import collect_order_media_dicts
+
+logger = logging.getLogger(__name__)
 
 _ADMIN_ORDER_FILTER_STATUSES = ORDER_FILTER_STATUSES
 _DEFAULT_ADMIN_ORDER_STATUS_FILTERS = list(DEFAULT_ORDER_FILTER_VALUES)
@@ -73,11 +78,10 @@ async def _load_admin_orders_page(
             state["page"] = page
         offset = (safe_page - 1) * page_size
         chunk = order_numbers[offset : offset + page_size]
-        orders = []
-        for order_number in chunk:
-            order = await container.order_admin_service.get_order(order_number)
-            if order:
-                orders.append(order)
+        fetched = await asyncio.gather(
+            *[container.order_admin_service.get_order(order_number) for order_number in chunk]
+        )
+        orders = [order for order in fetched if order]
         return orders, total, total_pages
 
     statuses = _admin_orders_query_statuses(state)
@@ -98,6 +102,196 @@ async def _load_admin_orders_page(
     return orders, total, total_pages
 
 
+async def _load_profiles_for_orders(
+    container: AppContainer,
+    orders: list[BuyoutOrder],
+) -> dict[int, object | None]:
+    profile_ids = list({order.user_profile_id for order in orders if order.user_profile_id})
+    if not profile_ids:
+        return {}
+    profiles = await asyncio.gather(
+        *[container.profile_repo.get_by_id(profile_id) for profile_id in profile_ids]
+    )
+    return dict(zip(profile_ids, profiles))
+
+
+def _build_admin_order_blocks(
+    orders: list[BuyoutOrder],
+    selected: set[str],
+    profile_cache: dict[int, object | None],
+    histories: dict[int, list[OrderStatusHistoryItem]] | None,
+) -> list[str]:
+    order_blocks: list[str] = []
+    for order in orders:
+        mark = "✅" if order.order_number in selected else "⬜️"
+        profile = profile_cache.get(order.user_profile_id)
+        extra_lines: list[str] = []
+        if profile:
+            extra_lines.append(f"Клиент: {_h(profile.code)} / {_h(profile.name or '—')}")
+        history = histories.get(order.id, []) if histories is not None else []
+        header = f"{mark} <b>Выкуп №{_h(order.order_number)}</b>"
+        order_blocks.append(
+            format_order_blockquote(
+                order,
+                history,
+                header_line=header,
+                extra_lines=extra_lines or None,
+            )
+        )
+    return order_blocks
+
+
+async def _load_order_histories_map(
+    container: AppContainer,
+    orders: list[BuyoutOrder],
+    *,
+    limit: int = 3,
+) -> dict[int, list[OrderStatusHistoryItem]]:
+    if not orders:
+        return {}
+    history_lists = await asyncio.gather(
+        *[container.order_admin_service.history(order.id, limit=limit) for order in orders]
+    )
+    return {order.id: history for order, history in zip(orders, history_lists)}
+
+
+async def _load_order_media_groups(
+    container: AppContainer,
+    orders: list[BuyoutOrder],
+) -> list[tuple[str, list[dict]]]:
+    if not orders:
+        return []
+    media_lists = await asyncio.gather(
+        *[container.buyout_repo.list_order_media(order.id) for order in orders]
+    )
+    order_media_groups: list[tuple[str, list[dict]]] = []
+    for order, media_items in zip(orders, media_lists):
+        media_dicts = collect_order_media_dicts(order, media_items)
+        if media_dicts:
+            order_media_groups.append((order.order_number, media_dicts))
+    return order_media_groups
+
+
+def _admin_orders_panel_header(
+    state: dict,
+    *,
+    total: int,
+    total_pages: int,
+    orders_count: int,
+) -> list[str]:
+    page = int(state.get("page", 1))
+    selected = set(state.get("selected", []))
+    search_active = isinstance(state.get("search_results"), list) and bool(state.get("search_results"))
+    header_parts = [
+        "<b>Заказы (массовое обновление)</b>",
+        "",
+        f"Страница {page}/{total_pages}",
+        f"Выбрано: {len(selected)}",
+    ]
+    if search_active:
+        header_parts.append(f"Поиск: найдено {total}")
+    if orders_count:
+        header_parts.append("<i>Загрузка истории и медиа…</i>")
+    return header_parts
+
+
+async def _present_admin_orders_panel_fast(
+    message: Message,
+    state: dict,
+    *,
+    text: str,
+    reply_markup,
+    replace_message: bool,
+) -> Message:
+    await clear_admin_orders_extra_media(message.bot, message.chat.id, state)
+    state["extra_media_message_ids"] = []
+    if replace_message:
+        try:
+            await message.delete()
+        except Exception:
+            pass
+    return await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
+
+
+def _orders_panel_version_matches(session, panel_version: int) -> bool:
+    current = _get_admin_orders_state(session)
+    return int(current.get("orders_panel_version", 0)) == panel_version
+
+
+async def _enrich_admin_orders_panel(
+    panel_message: Message,
+    *,
+    container: AppContainer,
+    codec: CallbackCodec,
+    user_id: int,
+    state: dict,
+    session,
+    orders: list[BuyoutOrder],
+    total: int,
+    total_pages: int,
+    profile_cache: dict[int, object | None],
+    panel_version: int,
+) -> None:
+    try:
+        histories, order_media_groups = await asyncio.gather(
+            _load_order_histories_map(container, orders),
+            _load_order_media_groups(container, orders),
+        )
+        if not _orders_panel_version_matches(session, panel_version):
+            return
+
+        page = int(state.get("page", 1))
+        selected = set(state.get("selected", []))
+        header_parts = _admin_orders_panel_header(
+            state,
+            total=total,
+            total_pages=total_pages,
+            orders_count=0,
+        )
+        order_blocks = _build_admin_order_blocks(orders, selected, profile_cache, histories)
+        keyboard = _orders_keyboard(
+            user_id,
+            codec,
+            page,
+            total_pages,
+            orders,
+            selected,
+            filter_states=_admin_orders_filter_states(state),
+            search_active=isinstance(state.get("search_results"), list) and bool(state.get("search_results")),
+        )
+        text = assemble_orders_panel_text(
+            header_parts,
+            order_blocks,
+            for_media_caption=bool(order_media_groups),
+        )
+        if order_media_groups:
+            extra_ids = await present_admin_orders_panel(
+                panel_message,
+                state,
+                text=text,
+                order_media_groups=order_media_groups,
+                reply_markup=keyboard,
+                replace_message=True,
+            )
+        else:
+            await edit_panel_message(panel_message, text=text, reply_markup=keyboard)
+            extra_ids = []
+
+        if not _orders_panel_version_matches(session, panel_version):
+            return
+
+        payload = dict(session.state_data)
+        block = dict(payload.get("_admin_orders") or {})
+        if int(block.get("orders_panel_version", 0)) != panel_version:
+            return
+        block["extra_media_message_ids"] = list(extra_ids)
+        payload["_admin_orders"] = block
+        session.state_data = payload
+        await container.session_repo.save(session)
+    except Exception:
+        logger.exception("Failed to enrich admin orders panel")
+
+
 async def _send_orders_panel(
     message: Message,
     container: AppContainer,
@@ -113,43 +307,22 @@ async def _send_orders_panel(
     selected = set(state.get("selected", []))
     search_active = isinstance(state.get("search_results"), list) and bool(state.get("search_results"))
 
-    header_parts = [
-        "<b>Заказы (массовое обновление)</b>",
-        "",
-        f"Страница {page}/{total_pages}",
-        f"Выбрано: {len(selected)}",
-    ]
-    if search_active:
-        header_parts.append(f"Поиск: найдено {total}")
+    state["orders_panel_version"] = int(state.get("orders_panel_version", 0)) + 1
+    panel_version = int(state["orders_panel_version"])
+
+    header_parts = _admin_orders_panel_header(
+        state,
+        total=total,
+        total_pages=total_pages,
+        orders_count=len(orders),
+    )
 
     order_blocks: list[str] = []
-    order_media_groups: list[tuple[str, list[dict]]] = []
     if not orders:
         order_blocks.append("Заказов пока нет.")
     else:
-        profile_cache: dict[int, object | None] = {}
-        for order in orders:
-            mark = "✅" if order.order_number in selected else "⬜️"
-            if order.user_profile_id not in profile_cache:
-                profile_cache[order.user_profile_id] = await container.profile_repo.get_by_id(order.user_profile_id)
-            profile = profile_cache[order.user_profile_id]
-            extra_lines: list[str] = []
-            if profile:
-                extra_lines.append(f"Клиент: {_h(profile.code)} / {_h(profile.name or '—')}")
-            history = await container.order_admin_service.history(order.id, limit=3)
-            header = f"{mark} <b>Выкуп №{_h(order.order_number)}</b>"
-            order_blocks.append(
-                format_order_blockquote(
-                    order,
-                    history,
-                    header_line=header,
-                    extra_lines=extra_lines or None,
-                )
-            )
-            media_items = await container.buyout_repo.list_order_media(order.id)
-            media_dicts = collect_order_media_dicts(order, media_items)
-            if media_dicts:
-                order_media_groups.append((order.order_number, media_dicts))
+        profile_cache = await _load_profiles_for_orders(container, orders)
+        order_blocks = _build_admin_order_blocks(orders, selected, profile_cache, histories=None)
 
     keyboard = _orders_keyboard(
         user_id,
@@ -164,18 +337,33 @@ async def _send_orders_panel(
     text = assemble_orders_panel_text(
         header_parts,
         order_blocks,
-        for_media_caption=bool(order_media_groups),
+        for_media_caption=False,
     )
-    extra_ids = await present_admin_orders_panel(
+    panel_message = await _present_admin_orders_panel_fast(
         message,
         state,
         text=text,
-        order_media_groups=order_media_groups,
         reply_markup=keyboard,
         replace_message=edit,
     )
-    state["extra_media_message_ids"] = extra_ids
     await _save_admin_orders_state(container, session, state)
+
+    if orders:
+        asyncio.create_task(
+            _enrich_admin_orders_panel(
+                panel_message,
+                container=container,
+                codec=codec,
+                user_id=user_id,
+                state=state,
+                session=session,
+                orders=orders,
+                total=total,
+                total_pages=total_pages,
+                profile_cache=profile_cache,
+                panel_version=panel_version,
+            )
+        )
 
 
 def _append_order_toggle_rows(
@@ -395,6 +583,7 @@ def _get_admin_orders_state(session) -> dict:
                 "extra_media_message_ids": [
                     int(item) for item in block.get("extra_media_message_ids", []) if str(item).isdigit()
                 ],
+                "orders_panel_version": int(block.get("orders_panel_version", 0)),
             }
     return {
         "page": 1,
@@ -409,6 +598,7 @@ def _get_admin_orders_state(session) -> dict:
         "order_search_mode": None,
         "search_results": None,
         "extra_media_message_ids": [],
+        "orders_panel_version": 0,
     }
 
 
@@ -427,6 +617,7 @@ async def _save_admin_orders_state(container: AppContainer, session, state: dict
         "order_search_mode": state.get("order_search_mode"),
         "search_results": state.get("search_results"),
         "extra_media_message_ids": list(state.get("extra_media_message_ids") or []),
+        "orders_panel_version": int(state.get("orders_panel_version", 0)),
     }
     session.state_data = payload
     await container.session_repo.save(session)

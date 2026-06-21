@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 
 import aiohttp
@@ -25,7 +26,7 @@ from app.bot.telegram.fsm_utils import (
 )
 from app.bot.telegram.handlers.admin.all_helpers import *
 from app.bot.telegram.handlers.admin.context import AdminContext
-from app.bot.telegram.handlers.admin.panel import send_admin_panel
+from app.bot.telegram.handlers.admin.panel import build_admin_panel_text, send_admin_panel
 from app.bot.telegram.handlers.content_utils_admin import (
     SCREEN_EDIT_MEDIA as CONTENT_UTILS_EDIT_MEDIA,
     SCREEN_EDIT_MENU as CONTENT_UTILS_EDIT_MENU,
@@ -83,12 +84,15 @@ def register_menu_messages(router: Router, ctx: AdminContext) -> None:
         if not message.from_user:
             return
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
-        await _clear_admin_input_states(container, session)
+        clear_task = asyncio.create_task(_clear_admin_input_states(container, session))
+        panel_text_task = asyncio.create_task(build_admin_panel_text(container))
+        await asyncio.gather(clear_task, panel_text_task)
         await send_admin_panel(
             message,
             container=container,
             user_id=message.from_user.id,
             callback_codec=callback_codec,
+            text=panel_text_task.result(),
         )
 
     @router.message(F.text == "Назад")

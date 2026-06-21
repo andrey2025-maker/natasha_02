@@ -193,13 +193,22 @@ def build_profile_router(container: AppContainer) -> Router:
     async def profile_menu(message: Message) -> None:
         if not message.from_user:
             return
-        if await _is_blocked_user(message.from_user.id):
+        profile = await container.profile_repo.get_by_platform_user(platform, message.from_user.id)
+        if profile and profile.is_blocked_by_admin:
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
+        session = await container.profile_flow.get_or_create_session(
+            platform,
+            message.from_user.id,
+            known_profile=profile,
+        )
         if await container.admin_service.is_admin(message.from_user.id):
             await clear_admin_input_states(container, session)
-        response = await container.profile_flow.show_profile_menu(session, other_platform_label="ВК")
+        response = await container.profile_flow.show_profile_menu(
+            session,
+            other_platform_label="ВК",
+            profile=profile,
+        )
         response.reply_markup = profile_menu_keyboard(
             "ВК",
             message.from_user.id,

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from app.domain.enums import DialogState, Platform
 from app.domain.models import UserProfile, UserSession
@@ -43,13 +47,24 @@ class ProfileFlowService:
         self._codes = code_service
         self._sync_service = sync_service
 
-    async def get_or_create_session(self, platform: Platform, platform_user_id: int) -> UserSession:
-        profile = await self._profiles.get_by_platform_user(platform, platform_user_id)
+    async def get_or_create_session(
+        self,
+        platform: Platform,
+        platform_user_id: int,
+        *,
+        known_profile: UserProfile | None = None,
+    ) -> UserSession:
+        profile = known_profile
+        if profile is None:
+            profile = await self._profiles.get_by_platform_user(platform, platform_user_id)
         if profile:
-            profile.last_activity_at = datetime.utcnow()
-            if profile.blocked_bot:
-                profile.blocked_bot = False
-            await self._profiles.save(profile)
+            asyncio.create_task(
+                _touch_profile_activity(
+                    self._profiles,
+                    profile.id,
+                    clear_blocked_bot=bool(profile.blocked_bot),
+                )
+            )
         session = await self._sessions.get(platform, platform_user_id)
         if session:
             return session
@@ -66,8 +81,15 @@ class ProfileFlowService:
         session.state_data = _keep_prefs(session.state_data, {})
         await self._sessions.save(session)
 
-    async def show_profile_menu(self, session: UserSession, other_platform_label: str) -> FlowResponse:
-        profile = await self._profiles.get_by_platform_user(session.platform, session.platform_user_id)
+    async def show_profile_menu(
+        self,
+        session: UserSession,
+        other_platform_label: str,
+        *,
+        profile: UserProfile | None = None,
+    ) -> FlowResponse:
+        if profile is None:
+            profile = await self._profiles.get_by_platform_user(session.platform, session.platform_user_id)
         if profile and profile.is_filled:
             text = msg.profile_summary(profile)
         else:
@@ -424,6 +446,24 @@ class ProfileFlowService:
         else:
             profile.vk_user_id = session.platform_user_id
         return await self._profiles.save(profile)
+
+
+async def _touch_profile_activity(
+    profiles: UserProfileRepository,
+    profile_id: int,
+    *,
+    clear_blocked_bot: bool,
+) -> None:
+    try:
+        profile = await profiles.get_by_id(profile_id)
+        if not profile:
+            return
+        profile.last_activity_at = datetime.utcnow()
+        if clear_blocked_bot and profile.blocked_bot:
+            profile.blocked_bot = False
+        await profiles.save(profile)
+    except Exception:
+        logger.exception("Failed to touch profile activity for id=%s", profile_id)
 
 
 def _keep_prefs(existing: dict[str, Any], new_data: dict[str, Any]) -> dict[str, Any]:
