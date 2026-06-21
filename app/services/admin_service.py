@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 
 from app.domain.models import UserProfile
 from app.storage.interfaces import AdminRepository, UserProfileRepository
+
+_ADMIN_CACHE_TTL_SECONDS = 60.0
 
 
 @dataclass(slots=True)
@@ -11,11 +14,21 @@ class AdminService:
     main_admin_id: int
     admin_repo: AdminRepository
     profile_repo: UserProfileRepository
+    _is_admin_cache: dict[int, tuple[float, bool]] = field(default_factory=dict, repr=False)
 
     async def is_admin(self, telegram_user_id: int) -> bool:
         if telegram_user_id == self.main_admin_id:
             return True
-        return await self.admin_repo.is_admin(telegram_user_id)
+        now = time.monotonic()
+        cached = self._is_admin_cache.get(telegram_user_id)
+        if cached is not None and now - cached[0] < _ADMIN_CACHE_TTL_SECONDS:
+            return cached[1]
+        result = await self.admin_repo.is_admin(telegram_user_id)
+        self._is_admin_cache[telegram_user_id] = (now, result)
+        return result
+
+    def _drop_admin_cache(self, telegram_user_id: int) -> None:
+        self._is_admin_cache.pop(telegram_user_id, None)
 
     async def add_admin(self, actor_id: int, new_admin_id: int) -> bool:
         if actor_id != self.main_admin_id:
@@ -23,6 +36,7 @@ class AdminService:
         if new_admin_id == self.main_admin_id:
             return True
         await self.admin_repo.add_admin(new_admin_id, added_by=actor_id)
+        self._drop_admin_cache(new_admin_id)
         return True
 
     async def remove_admin(self, actor_id: int, admin_id: int) -> bool:
@@ -31,6 +45,7 @@ class AdminService:
         if admin_id == self.main_admin_id:
             return False
         await self.admin_repo.remove_admin(admin_id)
+        self._drop_admin_cache(admin_id)
         return True
 
     async def list_admins(self) -> list[int]:

@@ -95,8 +95,17 @@ class ProfileFlowService:
         else:
             text = msg.profile_intro()
 
+        new_state_data = _keep_prefs(session.state_data, {})
+        if session.state == DialogState.IDLE and session.state_data == new_state_data:
+            return FlowResponse(
+                text=text,
+                state=DialogState.IDLE,
+                state_data={},
+                profile=profile,
+            )
+
         session.state = DialogState.IDLE
-        session.state_data = _keep_prefs(session.state_data, {})
+        session.state_data = new_state_data
         await self._sessions.save(session)
 
         return FlowResponse(

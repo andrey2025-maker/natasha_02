@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from html import escape
 
 from aiogram import F, Router
@@ -197,13 +198,14 @@ def build_profile_router(container: AppContainer) -> Router:
         if profile and profile.is_blocked_by_admin:
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        session = await container.profile_flow.get_or_create_session(
-            platform,
-            message.from_user.id,
-            known_profile=profile,
+        session, is_admin = await asyncio.gather(
+            container.profile_flow.get_or_create_session(
+                platform,
+                message.from_user.id,
+                known_profile=profile,
+            ),
+            container.admin_service.is_admin(message.from_user.id),
         )
-        if await container.admin_service.is_admin(message.from_user.id):
-            await clear_admin_input_states(container, session)
         response = await container.profile_flow.show_profile_menu(
             session,
             other_platform_label="ВК",
@@ -216,6 +218,8 @@ def build_profile_router(container: AppContainer) -> Router:
             profile=response.profile,
         )
         await _apply_response(message, response)
+        if is_admin:
+            asyncio.create_task(clear_admin_input_states(container, session))
 
     @router.message(F.text == "Заполнить профиль")
     async def start_fill(message: Message) -> None:

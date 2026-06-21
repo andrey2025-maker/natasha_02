@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 
 import aiohttp
@@ -26,7 +27,13 @@ from app.bot.telegram.fsm_utils import (
 )
 from app.bot.telegram.handlers.admin.all_helpers import *
 from app.bot.telegram.handlers.admin.context import AdminContext
-from app.bot.telegram.handlers.admin.panel import build_admin_panel_text, send_admin_panel
+from app.bot.telegram.handlers.admin.panel import (
+    ADMIN_PANEL_LOADING_TEXT,
+    format_admin_panel_text,
+    peek_panel_stats_cache,
+    refresh_admin_panel_stats,
+    send_admin_panel,
+)
 from app.bot.telegram.handlers.content_utils_admin import (
     SCREEN_EDIT_MEDIA as CONTENT_UTILS_EDIT_MEDIA,
     SCREEN_EDIT_MENU as CONTENT_UTILS_EDIT_MENU,
@@ -56,6 +63,8 @@ from app.services.admin_tools_service import (
 )
 from app.services.dialog_topic_profile_sync import refresh_dialog_topic_profile
 
+logger = logging.getLogger(__name__)
+
 def register_menu_messages(router: Router, ctx: AdminContext) -> None:
     container = ctx.container
     callback_codec = ctx.callback_codec
@@ -83,17 +92,41 @@ def register_menu_messages(router: Router, ctx: AdminContext) -> None:
             return
         if not message.from_user:
             return
-        session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
-        clear_task = asyncio.create_task(_clear_admin_input_states(container, session))
-        panel_text_task = asyncio.create_task(build_admin_panel_text(container))
-        await asyncio.gather(clear_task, panel_text_task)
-        await send_admin_panel(
+        user_id = message.from_user.id
+        cached_stats = peek_panel_stats_cache()
+        if cached_stats is not None:
+            panel_text = format_admin_panel_text(*cached_stats)
+            needs_stats_refresh = False
+        else:
+            panel_text = ADMIN_PANEL_LOADING_TEXT
+            needs_stats_refresh = True
+
+        panel_message = await send_admin_panel(
             message,
             container=container,
-            user_id=message.from_user.id,
+            user_id=user_id,
             callback_codec=callback_codec,
-            text=panel_text_task.result(),
+            text=panel_text,
         )
+
+        async def finalize_admin_root() -> None:
+            try:
+                session = await container.profile_flow.get_or_create_session(
+                    Platform.TELEGRAM,
+                    user_id,
+                )
+                await _clear_admin_input_states(container, session)
+                if needs_stats_refresh:
+                    await refresh_admin_panel_stats(
+                        panel_message,
+                        container=container,
+                        user_id=user_id,
+                        callback_codec=callback_codec,
+                    )
+            except Exception:
+                logger.exception("Failed to finalize admin root panel for user_id=%s", user_id)
+
+        asyncio.create_task(finalize_admin_root())
 
     @router.message(F.text == "Назад")
     async def admin_back(message: Message) -> None:
