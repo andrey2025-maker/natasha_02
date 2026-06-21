@@ -4,7 +4,7 @@ from aiogram.types import Message
 
 from app.core.container import AppContainer
 from app.domain.models import UserSession
-from app.services.admin_tools_service import send_stored_media_to_telegram
+from app.services.admin_tools_service import clip_html_caption, send_stored_media_to_telegram
 
 
 async def _delete_message_ids(bot, chat_id: int, raw_ids: object) -> None:
@@ -54,11 +54,12 @@ async def _deliver_orders_panel(
 
     bot = message.bot
     chat_id = message.chat.id
+    caption = clip_html_caption(text)
     await send_stored_media_to_telegram(
         bot,
         chat_id,
         media_items[0],
-        caption=text,
+        caption=caption,
         parse_mode="HTML",
         reply_markup=reply_markup,
     )

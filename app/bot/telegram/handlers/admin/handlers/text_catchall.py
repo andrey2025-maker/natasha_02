@@ -94,6 +94,7 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
             orders_state.get("edit_field")
             or orders_state.get("bulk_field")
             or orders_state.get("pending_field")
+            or orders_state.get("awaiting_order_search_query")
         )
         has_dialog_fsm = session.state != DialogState.IDLE
 
@@ -119,10 +120,15 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
             return
 
         if not has_utils and not has_broadcast:
-            edit_order = orders_state.get("edit_order")
-            edit_field = orders_state.get("edit_field")
-            bulk_field = orders_state.get("bulk_field")
-            if not edit_order or not edit_field:
+            has_orders_input = bool(
+                orders_state.get("awaiting_order_search_query")
+                or orders_state.get("bulk_field")
+                or (
+                    orders_state.get("edit_order")
+                    and orders_state.get("edit_field")
+                )
+            )
+            if not has_orders_input:
                 raise SkipHandler
 
         edit_order = orders_state.get("edit_order")

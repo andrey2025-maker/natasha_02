@@ -1330,10 +1330,43 @@ def count_targets_for_platform(profiles: Iterable[UserProfile], platform: Platfo
 _TELEGRAM_CAPTION_LIMIT = 1024
 
 
-def _clip_telegram_caption(text: str) -> str:
-    if len(text) <= _TELEGRAM_CAPTION_LIMIT:
+def _close_open_html_tags(text: str) -> str:
+    result = text
+    for tag in ("b", "i", "code"):
+        open_count = result.count(f"<{tag}>") - result.count(f"</{tag}>")
+        if open_count > 0:
+            result += f"</{tag}>" * open_count
+    blockquote_open = result.count("<blockquote") - result.count("</blockquote>")
+    if blockquote_open > 0:
+        result += "</blockquote>" * blockquote_open
+    return result
+
+
+def clip_html_caption(text: str, limit: int = _TELEGRAM_CAPTION_LIMIT) -> str:
+    if len(text) <= limit:
         return text
-    return text[: _TELEGRAM_CAPTION_LIMIT - 1] + "…"
+    suffix = "…"
+    budget = max(1, limit - len(suffix))
+    cut = text[:budget]
+    last_open = cut.rfind("<")
+    last_close = cut.rfind(">")
+    if last_open > last_close:
+        cut = cut[:last_open]
+    while cut:
+        closed = _close_open_html_tags(cut)
+        candidate = closed + suffix
+        if len(candidate) <= limit:
+            return candidate
+        cut = cut[:-1]
+        last_open = cut.rfind("<")
+        last_close = cut.rfind(">")
+        if last_open > last_close:
+            cut = cut[:last_open]
+    return suffix[:limit]
+
+
+def _clip_telegram_caption(text: str) -> str:
+    return clip_html_caption(text)
 
 
 def _resolve_media_caption(media: dict, caption: str | None) -> str | None:

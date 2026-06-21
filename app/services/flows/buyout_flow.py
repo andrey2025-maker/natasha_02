@@ -10,7 +10,7 @@ from app.services.order_filter_config import (
     ORDER_FILTER_STATUSES,
     order_filter_title,
 )
-from app.services.order_list_format import format_order_blockquote, order_status_title
+from app.services.order_list_format import assemble_orders_panel_text, format_order_blockquote, order_status_title
 from app.services.order_media_utils import collect_order_media_dicts
 from app.bot.telegram.fsm_utils import fsm_prompt
 from app.domain.enums import DeliveryFlowType, DialogState, OrderStatus, Platform
@@ -220,10 +220,10 @@ class BuyoutFlowService:
             lines.append(format_order_blockquote(order, history))
 
         total_pages = (total + page_size - 1) // page_size
-        text = (
-            "<b>Мои заказы</b>\n\n"
-            + "\n\n".join(lines)
-            + f"\n\nСтраница {safe_page}/{total_pages}"
+        text = assemble_orders_panel_text(
+            ["<b>Мои заказы</b>", "", f"Страница {safe_page}/{total_pages}"],
+            lines,
+            for_media_caption=bool(order_media_groups),
         )
         return BuyoutFlowResponse(
             text=text,

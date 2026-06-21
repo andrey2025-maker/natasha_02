@@ -198,7 +198,12 @@ def admin_session_has_pending(session) -> bool:
     if _get_admin_broadcast_state(session).get("awaiting_payload"):
         return True
     orders_state = _get_admin_orders_state(session)
-    if orders_state.get("edit_field") or orders_state.get("bulk_field") or orders_state.get("pending_field"):
+    if (
+        orders_state.get("edit_field")
+        or orders_state.get("bulk_field")
+        or orders_state.get("pending_field")
+        or orders_state.get("awaiting_order_search_query")
+    ):
         return True
     return False
 
@@ -217,6 +222,8 @@ async def clear_admin_input_states(container: AppContainer, session) -> None:
     orders_state["bulk_field"] = None
     orders_state["pending_field"] = None
     orders_state["pending_value"] = None
+    orders_state["awaiting_order_search_query"] = False
+    orders_state["order_search_mode"] = None
     await _save_admin_orders_state(container, session, orders_state)
 
 

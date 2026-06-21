@@ -62,3 +62,35 @@ def format_order_blockquote(
     )
     order_block = "\n".join(order_lines)
     return f"<blockquote expandable>{order_block}</blockquote>"
+
+
+def assemble_orders_panel_text(
+    header_parts: list[str],
+    order_blocks: list[str],
+    *,
+    for_media_caption: bool = False,
+    empty_text: str = "Заказов пока нет.",
+    caption_limit: int = 1024,
+) -> str:
+    from app.services.admin_tools_service import clip_html_caption
+
+    header = "\n".join(header_parts)
+    if not order_blocks:
+        return f"{header}\n\n{empty_text}"
+    if not for_media_caption:
+        return f"{header}\n\n" + "\n\n".join(order_blocks)
+
+    included: list[str] = []
+    for block in order_blocks:
+        candidate = f"{header}\n\n" + "\n\n".join(included + [block])
+        if len(candidate) > caption_limit and included:
+            break
+        included.append(block)
+        if len(candidate) > caption_limit:
+            break
+
+    text = f"{header}\n\n" + "\n\n".join(included)
+    remaining = len(order_blocks) - len(included)
+    if remaining > 0:
+        text += f"\n\n<i>…и ещё {remaining} на странице</i>"
+    return clip_html_caption(text, caption_limit)

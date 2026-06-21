@@ -12,7 +12,7 @@ from app.domain.enums import OrderStatus, Platform
 from app.domain.models import OutboundMessage
 from app.services.admin_tools_service import PaymentTextStore, send_stored_media_to_telegram
 from app.services.order_filter_config import DEFAULT_ORDER_FILTER_VALUES, ORDER_FILTER_STATUSES, order_filter_button_text
-from app.services.order_list_format import format_order_blockquote, order_status_title
+from app.services.order_list_format import assemble_orders_panel_text, format_order_blockquote, order_status_title
 from app.services.order_media_utils import collect_order_media_dicts
 
 _ADMIN_ORDER_FILTER_STATUSES = ORDER_FILTER_STATUSES
@@ -161,7 +161,11 @@ async def _send_orders_panel(
         filter_states=_admin_orders_filter_states(state),
         search_active=search_active,
     )
-    text = "\n".join(header_parts) + "\n\n" + "\n\n".join(order_blocks)
+    text = assemble_orders_panel_text(
+        header_parts,
+        order_blocks,
+        for_media_caption=bool(order_media_groups),
+    )
     extra_ids = await present_admin_orders_panel(
         message,
         state,
