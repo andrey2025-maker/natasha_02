@@ -226,33 +226,39 @@ class BuyoutFlowService:
         page_size: int = 9,
         *,
         include_details: bool = True,
+        profile: UserProfile | None = None,
     ) -> BuyoutFlowResponse:
-        await self._hydrate_preferences(session, persist=False)
-        profile = await self._profiles.get_by_platform_user(session.platform, session.platform_user_id)
+        if profile is None:
+            profile = await self._profiles.get_by_platform_user(session.platform, session.platform_user_id)
         if not profile:
             return BuyoutFlowResponse("Сначала заполните профиль.", DialogState.IDLE, {})
 
         statuses = self._get_query_statuses(session)
-        total = await self._orders.count_for_user(profile.id, statuses=statuses)
-        if total == 0:
-            return BuyoutFlowResponse("По текущим фильтрам заказов нет.", DialogState.IDLE, {})
-
         safe_page = max(1, page)
         offset = (safe_page - 1) * page_size
-        orders = await self._orders.list_for_user(
-            profile.id,
-            limit=page_size,
-            offset=offset,
-            statuses=statuses,
-        )
-        if not orders and safe_page > 1:
-            safe_page -= 1
-            offset = (safe_page - 1) * page_size
-            orders = await self._orders.list_for_user(
+        total, orders = await asyncio.gather(
+            self._orders.count_for_user(profile.id, statuses=statuses),
+            self._orders.list_for_user(
                 profile.id,
                 limit=page_size,
                 offset=offset,
                 statuses=statuses,
+            ),
+        )
+        if total == 0:
+            return BuyoutFlowResponse("По текущим фильтрам заказов нет.", DialogState.IDLE, {})
+
+        if not orders and safe_page > 1:
+            safe_page -= 1
+            offset = (safe_page - 1) * page_size
+            total, orders = await asyncio.gather(
+                self._orders.count_for_user(profile.id, statuses=statuses),
+                self._orders.list_for_user(
+                    profile.id,
+                    limit=page_size,
+                    offset=offset,
+                    statuses=statuses,
+                ),
             )
 
         header_parts = ["<b>Мои заказы</b>", ""]

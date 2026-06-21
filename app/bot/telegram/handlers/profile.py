@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from html import escape
 
 from aiogram import F, Router
@@ -26,6 +27,7 @@ from app.services.admin_tools_service import GroupTopicsStore, NotificationSetti
 from app.bot.telegram.handlers.admin import admin_session_has_pending, clear_admin_input_states
 from app.services.dialog_topic_profile_sync import schedule_refresh_dialog_topic_profile
 
+logger = logging.getLogger(__name__)
 
 PROFILE_BUTTONS = {"Профиль", "👤 Профиль", "Заполнить профиль"}
 CONFIRM_BUTTONS = {"Да", "Имя", "Тел.", "Город"}
@@ -206,36 +208,50 @@ def build_profile_router(container: AppContainer) -> Router:
     async def profile_menu(message: Message) -> None:
         if not message.from_user:
             return
-        profile, existing_session = await asyncio.gather(
+        profile, existing_session, is_admin = await asyncio.gather(
             container.profile_repo.get_by_platform_user(platform, message.from_user.id),
             container.session_repo.get(platform, message.from_user.id),
+            container.admin_service.is_admin(message.from_user.id),
         )
         if profile and profile.is_blocked_by_admin:
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        session, is_admin = await asyncio.gather(
-            container.profile_flow.ensure_session(
-                platform,
-                message.from_user.id,
-                known_profile=profile,
-                existing_session=existing_session,
-            ),
-            container.admin_service.is_admin(message.from_user.id),
-        )
-        response = await container.profile_flow.show_profile_menu(
-            session,
-            other_platform_label="ВК",
-            profile=profile,
-        )
-        response.reply_markup = profile_menu_keyboard(
+        if profile and profile.is_filled:
+            text = msg.profile_summary(profile)
+        else:
+            text = msg.profile_intro()
+        reply_markup = profile_menu_keyboard(
             "ВК",
             message.from_user.id,
             callback_codec,
-            profile=response.profile,
+            profile=profile,
         )
-        await _apply_response(message, response)
-        if is_admin:
-            asyncio.create_task(clear_admin_input_states(container, session))
+        await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
+        if profile is not None and getattr(profile, "telegram_user_id", None):
+            schedule_refresh_dialog_topic_profile(
+                message.bot,
+                container=container,
+                tg_user_id=int(profile.telegram_user_id),
+                group_topics_store=group_topics_store,
+                topic_dialog_store=topic_dialog_store,
+                notification_settings_store=notification_settings_store,
+            )
+
+        async def finalize_profile_menu() -> None:
+            try:
+                session = await container.profile_flow.ensure_session(
+                    platform,
+                    message.from_user.id,
+                    known_profile=profile,
+                    existing_session=existing_session,
+                )
+                await container.profile_flow.persist_idle_menu_state(session)
+                if is_admin:
+                    await clear_admin_input_states(container, session)
+            except Exception:
+                logger.exception("Failed to finalize profile menu for user_id=%s", message.from_user.id)
+
+        asyncio.create_task(finalize_profile_menu())
 
     @router.message(F.text == "Заполнить профиль")
     async def start_fill(message: Message) -> None:

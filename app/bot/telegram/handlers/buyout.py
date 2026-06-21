@@ -96,6 +96,7 @@ def build_buyout_router(container: AppContainer) -> Router:
         *,
         page: int = 1,
         replace_message: bool = False,
+        profile=None,
     ) -> None:
         if not message.from_user:
             return
@@ -108,45 +109,66 @@ def build_buyout_router(container: AppContainer) -> Router:
             user_id=message.from_user.id,
             build_reply_markup=_orders_reply_markup,
             replace_message=replace_message,
+            profile=profile,
         )
 
     @router.message(F.text.in_({"Мои заказы", "📦 Мои заказы"}))
     async def show_my_orders(message: Message) -> None:
         if not message.from_user:
             return
-        if await _is_blocked_user(message.from_user.id):
-            await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
-            return
         profile, existing_session = await asyncio.gather(
             container.profile_repo.get_by_platform_user(platform, message.from_user.id),
             container.session_repo.get(platform, message.from_user.id),
         )
-        session = await container.profile_flow.ensure_session(
-            platform,
-            message.from_user.id,
-            known_profile=profile,
-            existing_session=existing_session,
-        )
-        await _open_my_orders(message, session, page=1)
+        if profile and profile.is_blocked_by_admin:
+            await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
+            return
+        if existing_session is not None:
+            session = existing_session
+            asyncio.create_task(
+                container.profile_flow.ensure_session(
+                    platform,
+                    message.from_user.id,
+                    known_profile=profile,
+                    existing_session=existing_session,
+                )
+            )
+        else:
+            session = await container.profile_flow.get_or_create_session(
+                platform,
+                message.from_user.id,
+                known_profile=profile,
+            )
+        await _open_my_orders(message, session, page=1, profile=profile)
 
     @router.message(F.text.in_({"Фильтры заказов", "🎛 Фильтры заказов"}))
     async def show_filters(message: Message) -> None:
         if not message.from_user:
             return
-        if await _is_blocked_user(message.from_user.id):
-            await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
-            return
         profile, existing_session = await asyncio.gather(
             container.profile_repo.get_by_platform_user(platform, message.from_user.id),
             container.session_repo.get(platform, message.from_user.id),
         )
-        session = await container.profile_flow.ensure_session(
-            platform,
-            message.from_user.id,
-            known_profile=profile,
-            existing_session=existing_session,
-        )
-        await _open_my_orders(message, session, page=1)
+        if profile and profile.is_blocked_by_admin:
+            await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
+            return
+        if existing_session is not None:
+            session = existing_session
+            asyncio.create_task(
+                container.profile_flow.ensure_session(
+                    platform,
+                    message.from_user.id,
+                    known_profile=profile,
+                    existing_session=existing_session,
+                )
+            )
+        else:
+            session = await container.profile_flow.get_or_create_session(
+                platform,
+                message.from_user.id,
+                known_profile=profile,
+            )
+        await _open_my_orders(message, session, page=1, profile=profile)
 
     @router.callback_query()
     async def my_orders_pagination(callback: CallbackQuery) -> None:

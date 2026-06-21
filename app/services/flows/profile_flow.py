@@ -111,6 +111,14 @@ class ProfileFlowService:
         session.state_data = _keep_prefs(session.state_data, {})
         await self._sessions.save(session)
 
+    async def persist_idle_menu_state(self, session: UserSession) -> None:
+        new_state_data = _keep_prefs(session.state_data, {})
+        if session.state == DialogState.IDLE and session.state_data == new_state_data:
+            return
+        session.state = DialogState.IDLE
+        session.state_data = new_state_data
+        await self._sessions.save(session)
+
     async def show_profile_menu(
         self,
         session: UserSession,
