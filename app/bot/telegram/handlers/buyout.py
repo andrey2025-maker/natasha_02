@@ -828,22 +828,19 @@ def build_buyout_router(container: AppContainer) -> Router:
     @router.message(F.chat.type.in_({"group", "supergroup"}), F.reply_to_message, F.text)
     async def handle_group_price_reply(message: Message) -> None:
         if not message.from_user or not message.text or not message.reply_to_message:
-            return
+            raise SkipHandler
         if not await container.admin_service.is_admin(message.from_user.id):
-            return
+            raise SkipHandler
 
         topics = await group_topics_store.ensure_all_system_topics(message.bot)
         if not topics or "buyout" not in topics:
-            await message.reply(
-                "Тема «Выкупы» недоступна. Проверьте chat_id группы и права бота на управление темами."
-            )
-            return
+            raise SkipHandler
         target_chat_id = int(topics["chat_id"])
         target_topic_id = int(topics["buyout"])
         if int(message.chat.id) != target_chat_id:
-            return
+            raise SkipHandler
         if message.message_thread_id != target_topic_id:
-            return
+            raise SkipHandler
 
         payment_topic_id = topics.get("payment")
         if payment_topic_id and int(message.chat.id) == target_chat_id and message.message_thread_id == int(payment_topic_id):
@@ -901,7 +898,7 @@ def build_buyout_router(container: AppContainer) -> Router:
         source_text = message.reply_to_message.text or message.reply_to_message.caption or ""
         order_number = _extract_order_number_from_text(source_text)
         if not order_number:
-            return
+            raise SkipHandler
         parsed = _parse_group_price_input(message.text)
         if not parsed:
             await message.reply(

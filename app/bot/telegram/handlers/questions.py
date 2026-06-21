@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
 from app.bot.telegram.callback_panel import edit_content_with_media, edit_panel_message
+from app.bot.telegram.bot_api import api_copy_message, api_send_message
 from app.bot.telegram.mirror_bot import skip_dialog_mirror
 from app.core.container import AppContainer
 from app.domain.enums import Platform
@@ -92,11 +93,11 @@ def build_questions_router(container: AppContainer) -> Router:
     @router.message(F.chat.type.in_({"group", "supergroup"}), F.reply_to_message, F.text)
     async def manager_text_reply_in_topic(message: Message) -> None:
         if not message.from_user or not message.text or not message.reply_to_message:
-            return
+            raise SkipHandler
         if message.text.startswith("/"):
-            return
+            raise SkipHandler
         if not await container.admin_service.is_admin(message.from_user.id):
-            return
+            raise SkipHandler
         relayed = await _relay_topic_reply_to_user(
             message=message,
             container=container,
@@ -109,9 +110,9 @@ def build_questions_router(container: AppContainer) -> Router:
     @router.message(F.chat.type.in_({"group", "supergroup"}), F.reply_to_message, F.photo | F.video | F.animation | F.document)
     async def manager_media_reply_in_topic(message: Message) -> None:
         if not message.from_user or not message.reply_to_message:
-            return
+            raise SkipHandler
         if not await container.admin_service.is_admin(message.from_user.id):
-            return
+            raise SkipHandler
         relayed = await _relay_topic_reply_to_user(
             message=message,
             container=container,
@@ -341,7 +342,8 @@ async def _relay_topic_reply_to_user(
     try:
         async with skip_dialog_mirror():
             if as_media:
-                await message.bot.copy_message(
+                await api_copy_message(
+                    message.bot,
                     chat_id=target_user_id,
                     from_chat_id=message.chat.id,
                     message_id=message.message_id,
@@ -350,9 +352,11 @@ async def _relay_topic_reply_to_user(
                 text = message.text or ""
                 if not text.strip():
                     return False
-                await message.bot.send_message(
+                await api_send_message(
+                    message.bot,
                     chat_id=target_user_id,
                     text=text,
+                    parse_mode=None,
                 )
     except Exception as exc:
         await _mark_blocked_bot_if_needed(container, target_user_id, exc)
@@ -375,6 +379,7 @@ async def _mark_relay_delivered_in_topic(message: Message) -> None:
             chat_id=int(message.chat.id),
             message_id=int(message.message_id),
             reaction=[ReactionTypeEmoji(emoji="👍")],
+            is_big=True,
         )
     except Exception:
         return

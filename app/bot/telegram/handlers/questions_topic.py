@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from app.bot.telegram.bot_api import api_copy_message
 from app.bot.telegram.callbacks import CallbackCodec
 from app.core.container import AppContainer
 from app.domain.enums import Platform
@@ -135,7 +136,8 @@ async def forward_message_to_dialog_topic(
     notify_kind = "button" if is_admin else "user"
     disable_notification = await notification_settings_store.should_disable_notification(notify_kind)
     try:
-        dialog_copy = await message.bot.copy_message(
+        dialog_copy = await api_copy_message(
+            message.bot,
             chat_id=int(logs_chat_id),
             from_chat_id=message.chat.id,
             message_id=message.message_id,
@@ -202,7 +204,8 @@ async def mirror_bot_message_to_dialog_topic(
     notify_kind = "button" if user_is_admin else "user"
     disable_notification = await notification_settings_store.should_disable_notification(notify_kind)
     try:
-        dialog_copy = await bot.copy_message(
+        dialog_copy = await api_copy_message(
+            bot,
             chat_id=int(logs_chat_id),
             from_chat_id=int(user_chat_id),
             message_id=int(message_id),

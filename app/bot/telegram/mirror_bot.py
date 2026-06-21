@@ -78,7 +78,10 @@ class DialogMirrorBot(Bot):
     ) -> list[Message]:
         messages = await super().send_media_group(chat_id, media, **kwargs)
         for sent in messages:
-            await self._mirror_outgoing(chat_id, sent)
+            try:
+                await self._mirror_outgoing(chat_id, sent)
+            except Exception:
+                pass
         return messages
 
     async def copy_messages(
@@ -90,7 +93,10 @@ class DialogMirrorBot(Bot):
     ) -> list[MessageId]:
         copied = await super().copy_messages(chat_id, from_chat_id, message_ids, **kwargs)
         for item in copied:
-            await self._mirror_outgoing(chat_id, item)
+            try:
+                await self._mirror_outgoing(chat_id, item)
+            except Exception:
+                pass
         return copied
 
     async def mirror_private_chat_message(self, chat_id: int, message_id: int) -> None:
@@ -118,15 +124,18 @@ class DialogMirrorBot(Bot):
         if resolved_message_id is None:
             return
 
-        await mirror_bot_message_to_dialog_topic(
-            self,
-            user_chat_id=target_chat_id,
-            message_id=int(resolved_message_id),
-            container=self._mirror_container,
-            group_topics_store=self._group_topics_store,
-            notification_settings_store=self._notification_settings_store,
-            topic_dialog_store=self._topic_dialog_store,
-        )
+        try:
+            await mirror_bot_message_to_dialog_topic(
+                self,
+                user_chat_id=target_chat_id,
+                message_id=int(resolved_message_id),
+                container=self._mirror_container,
+                group_topics_store=self._group_topics_store,
+                notification_settings_store=self._notification_settings_store,
+                topic_dialog_store=self._topic_dialog_store,
+            )
+        except Exception:
+            return
 
 
 def _wrap_outgoing_method(method_name: str) -> None:
@@ -134,7 +143,10 @@ def _wrap_outgoing_method(method_name: str) -> None:
 
     async def wrapped(self: DialogMirrorBot, chat_id: int | str, /, *args: Any, **kwargs: Any) -> Any:
         result = await original(self, chat_id, *args, **kwargs)
-        await self._mirror_outgoing(chat_id, result if isinstance(result, (Message, MessageId)) else None)
+        try:
+            await self._mirror_outgoing(chat_id, result if isinstance(result, (Message, MessageId)) else None)
+        except Exception:
+            pass
         return result
 
     setattr(DialogMirrorBot, method_name, wrapped)
