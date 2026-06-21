@@ -7,10 +7,10 @@ from zoneinfo import ZoneInfo
 
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from app.bot.telegram.bot_api import api_copy_message
+from app.bot.telegram.bot_api import api_copy_message, api_send_message
 from app.bot.telegram.callbacks import CallbackCodec
 from app.core.container import AppContainer
-from app.domain.enums import Platform
+from app.domain.enums import DialogState, Platform
 from app.services.admin_tools_service import (
     GroupTopicsStore,
     NotificationSettingsStore,
@@ -32,6 +32,76 @@ def build_tg_forum_message_link(chat_id: int, message_id: int, topic_id: int | N
 
 def format_omsk_now() -> str:
     return datetime.now(ZoneInfo("Asia/Omsk")).strftime("%d.%m.%Y %H:%M")
+
+
+MENU_TEXTS_SKIP_QUESTIONS_ALERT = {
+    "Профиль",
+    "👤 Профиль",
+    "Заполнить профиль",
+    "Да",
+    "Имя",
+    "Тел.",
+    "Город",
+    "Есть профиль ВК",
+    "❓ Вопросы",
+    "Вопросы",
+    "🚫 Запрещенные товары",
+    "Запрещенные товары",
+    "☎️ Наши контакты",
+    "Наши контакты",
+    "🚚 Как работает доставка",
+    "Как работает доставка",
+    "🛍 Заказ выкупа",
+    "Заказ выкупа",
+    "📦 Мои заказы",
+    "Мои заказы",
+    "🎛 Фильтры заказов",
+    "Фильтры заказов",
+    "Ещё товар",
+    "Нет",
+    "🛠 Админ",
+}
+
+
+async def should_forward_idle_message_to_questions(
+    message: Message,
+    *,
+    container: AppContainer,
+) -> bool:
+    if not message.from_user or message.from_user.is_bot:
+        return False
+    if message.chat.type != "private":
+        return False
+    if await container.admin_service.is_admin(message.from_user.id):
+        return False
+    session = await container.profile_flow.get_or_create_session(
+        Platform.TELEGRAM,
+        message.from_user.id,
+    )
+    if session.state != DialogState.IDLE:
+        return False
+    text = (message.text or "").strip()
+    if text.startswith("/"):
+        return False
+    if text in MENU_TEXTS_SKIP_QUESTIONS_ALERT:
+        return False
+    user_key = f"tg:{message.from_user.id}"
+    payload = text or "<media>"
+    if not container.rate_limiter.allow_request(user_key, payload):
+        return False
+    if text and not container.rate_limiter.validate_user_payload_size(len(text)):
+        return False
+    if not text:
+        media_size_bytes = (
+            (message.photo[-1].file_size if message.photo else None)
+            or (message.video.file_size if message.video else None)
+            or (message.animation.file_size if message.animation else None)
+            or (message.document.file_size if message.document else None)
+        )
+        media_size_mb = int(media_size_bytes / (1024 * 1024)) if media_size_bytes else None
+        if not container.rate_limiter.validate_user_payload_size(text_size=0, media_size_mb=media_size_mb):
+            return False
+    return True
 
 
 def processor_display_name(user) -> str:
@@ -236,9 +306,9 @@ async def forward_idle_message_to_questions_topic(
     callback_codec: CallbackCodec,
     send_ack: bool = True,
     dialog_mirror: tuple[int, int, int] | None = None,
-) -> None:
+) -> bool:
     if not message.from_user:
-        return
+        return False
 
     profile = await container.profile_repo.get_by_platform_user(Platform.TELEGRAM, message.from_user.id)
     logs_chat_id, _ = await group_topics_store.get_tg_topic("logs")
@@ -247,7 +317,7 @@ async def forward_idle_message_to_questions_topic(
             await message.answer(
                 "Группа не настроена. Админу: Утилиты → Группа → укажите chat_id."
             )
-        return
+        return False
     questions_chat_id, questions_topic_id = await group_topics_store.get_tg_topic("questions")
     if not questions_topic_id:
         questions_chat_id, questions_topic_id = await group_topics_store.ensure_tg_topic(
@@ -259,7 +329,7 @@ async def forward_idle_message_to_questions_topic(
             await message.answer(
                 "Не удалось использовать тему «вопросы». Проверьте права бота на управление темами."
             )
-        return
+        return False
 
     copied = dialog_mirror
     if not copied:
@@ -272,7 +342,7 @@ async def forward_idle_message_to_questions_topic(
             is_admin=False,
         )
     if not copied:
-        return
+        return False
 
     logs_chat_id, dialog_topic_id, dialog_message_id = copied
     disable_notification = await notification_settings_store.should_disable_notification("user")
@@ -324,7 +394,8 @@ async def forward_idle_message_to_questions_topic(
     )
 
     try:
-        alert_message = await message.bot.send_message(
+        alert_message = await api_send_message(
+            message.bot,
             chat_id=int(questions_chat_id),
             text=alert_text,
             parse_mode="HTML",
@@ -334,7 +405,8 @@ async def forward_idle_message_to_questions_topic(
         )
         await questions_alert_store.attach_questions_message(alert_token, int(alert_message.message_id))
         if not message.text:
-            await message.bot.copy_message(
+            await api_copy_message(
+                message.bot,
                 chat_id=int(questions_chat_id),
                 from_chat_id=message.chat.id,
                 message_id=message.message_id,
@@ -343,10 +415,11 @@ async def forward_idle_message_to_questions_topic(
                 disable_notification=True,
             )
     except Exception:
-        return
+        return False
 
     if send_ack:
         await message.answer("Передал вопрос менеджеру. Ответим в этом чате как можно скорее.")
+    return True
 
 
 async def resolve_or_create_user_topic(

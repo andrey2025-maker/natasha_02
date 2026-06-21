@@ -21,10 +21,8 @@ from app.bot.texts import messages as msg
 from app.core.container import AppContainer
 from app.domain.enums import DialogState, Platform
 from app.domain.models import BuyoutOrder, OutboundMessage
-from app.services.admin_tools_service import GroupTopicsStore, NotificationSettingsStore, QuestionsAlertStore, TopicDialogStore
-from app.services.flows.profile_flow import FlowResponse
+from app.services.admin_tools_service import GroupTopicsStore, NotificationSettingsStore, TopicDialogStore
 from app.bot.telegram.handlers.admin import admin_session_has_pending, clear_admin_input_states
-from app.bot.telegram.handlers.questions_topic import forward_idle_message_to_questions_topic
 from app.services.dialog_topic_profile_sync import refresh_dialog_topic_profile
 
 
@@ -62,7 +60,6 @@ def build_profile_router(container: AppContainer) -> Router:
     group_topics_store = GroupTopicsStore(container.settings.database.dsn)
     notification_settings_store = NotificationSettingsStore(container.settings.database.dsn)
     topic_dialog_store = TopicDialogStore(container.settings.database.dsn)
-    questions_alert_store = QuestionsAlertStore(container.settings.database.dsn)
 
     async def _apply_response(message: Message, response: object, *, edit: bool = False) -> None:
         outbound_messages = getattr(response, "outbound_messages", None)
@@ -433,10 +430,7 @@ def build_profile_router(container: AppContainer) -> Router:
         await _apply_response(callback.message, response, edit=True)
 
     @router.message(F.photo | F.video | F.animation | F.document)
-    async def profile_idle_media_flow(
-        message: Message,
-        dialog_mirror: tuple[int, int, int] | None = None,
-    ) -> None:
+    async def profile_idle_media_flow(message: Message) -> None:
         if not message.from_user:
             raise SkipHandler
         if message.chat.type != "private":
@@ -462,23 +456,9 @@ def build_profile_router(container: AppContainer) -> Router:
             return
         if session.state != DialogState.IDLE:
             return
-        await forward_idle_message_to_questions_topic(
-            message=message,
-            container=container,
-            group_topics_store=group_topics_store,
-            notification_settings_store=notification_settings_store,
-            topic_dialog_store=topic_dialog_store,
-            questions_alert_store=questions_alert_store,
-            callback_codec=callback_codec,
-            send_ack=True,
-            dialog_mirror=dialog_mirror,
-        )
 
     @router.message()
-    async def profile_text_flow(
-        message: Message,
-        dialog_mirror: tuple[int, int, int] | None = None,
-    ) -> None:
+    async def profile_text_flow(message: Message) -> None:
         if not message.from_user or not message.text:
             raise SkipHandler
         if message.chat.type != "private":
@@ -512,21 +492,6 @@ def build_profile_router(container: AppContainer) -> Router:
             return
         if not container.rate_limiter.validate_user_payload_size(len(message.text)):
             await message.answer("Сообщение слишком длинное.")
-            return
-        if not await container.admin_service.is_admin(message.from_user.id):
-            if session.state == DialogState.IDLE:
-                await forward_idle_message_to_questions_topic(
-                    message=message,
-                    container=container,
-                    group_topics_store=group_topics_store,
-                    notification_settings_store=notification_settings_store,
-                    topic_dialog_store=topic_dialog_store,
-                    questions_alert_store=questions_alert_store,
-                    callback_codec=callback_codec,
-                    send_ack=True,
-                    dialog_mirror=dialog_mirror,
-                )
-        elif session.state == DialogState.IDLE:
             return
         if session.state == DialogState.IDLE:
             return
