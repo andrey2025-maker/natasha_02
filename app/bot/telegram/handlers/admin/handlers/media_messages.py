@@ -47,7 +47,9 @@ from app.services.admin_tools_service import (
     parse_codes,
     send_stored_media_to_telegram,
 )
+from app.bot.telegram.handlers.admin.tracks import try_handle_admin_tracks_document
 from app.services.dialog_topic_profile_sync import refresh_dialog_topic_profile
+
 
 def register_media_messages(router: Router, ctx: AdminContext) -> None:
     container = ctx.container
@@ -76,6 +78,13 @@ def register_media_messages(router: Router, ctx: AdminContext) -> None:
         if not message.from_user:
             raise SkipHandler
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
+        if await try_handle_admin_tracks_document(
+            message,
+            container=container,
+            codec=callback_codec,
+            session=session,
+        ):
+            return
         utils_state = _get_admin_utils_state(session)
         if await try_handle_content_utils_submission(
             message,

@@ -145,6 +145,12 @@ def _admin_root_inline_keyboard(user_id: int, codec: CallbackCodec) -> InlineKey
                     callback_data=codec.encode("admin:menu:utils", user_id),
                 ),
             ],
+            [
+                InlineKeyboardButton(
+                    text="🔖 Трэки",
+                    callback_data=codec.encode("admin:menu:tracks", user_id),
+                ),
+            ],
         ]
     )
 

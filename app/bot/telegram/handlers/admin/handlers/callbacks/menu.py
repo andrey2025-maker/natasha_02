@@ -180,6 +180,26 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
                     reply_markup=_utils_inline_keyboard(callback.from_user.id, callback_codec),
                 )
                 return
+            if menu_action == "tracks":
+                from app.bot.telegram.handlers.admin.tracks import (
+                    _get_admin_tracks_state,
+                    _save_admin_tracks_state,
+                    open_admin_tracks_panel,
+                    reset_admin_tracks_state,
+                )
+
+                session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, callback.from_user.id)
+                tracks_state = _get_admin_tracks_state(session)
+                reset_admin_tracks_state(tracks_state)
+                await _save_admin_tracks_state(container, session, tracks_state)
+                await callback.answer()
+                await open_admin_tracks_panel(
+                    callback.message,
+                    user_id=callback.from_user.id,
+                    codec=callback_codec,
+                    edit=True,
+                )
+                return
             await callback.answer()
             return
 

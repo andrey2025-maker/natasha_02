@@ -343,3 +343,21 @@ class PostgresBuyoutOrderRepository(BuyoutOrderRepository):
             else:
                 return []
         return [_row_to_order(row) for row in rows]
+
+    async def list_orders_with_exact_tracks(self, tracks: list[str]) -> list[BuyoutOrder]:
+        from app.services.track_match_utils import normalize_track
+
+        normalized = sorted({normalize_track(item) for item in tracks if normalize_track(item)})
+        if not normalized:
+            return []
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM buyout_orders
+                WHERE track_number IS NOT NULL
+                  AND LOWER(TRIM(track_number)) = ANY($1::text[])
+                ORDER BY created_at DESC
+                """,
+                normalized,
+            )
+        return [_row_to_order(row) for row in rows]

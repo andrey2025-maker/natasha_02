@@ -52,7 +52,9 @@ from app.services.admin_tools_service import (
     parse_codes,
     send_stored_media_to_telegram,
 )
+from app.bot.telegram.handlers.admin.tracks import admin_tracks_has_pending, try_handle_admin_tracks_text
 from app.services.dialog_topic_profile_sync import refresh_dialog_topic_profile
+
 
 def register_text_catchall(router: Router, ctx: AdminContext) -> None:
     container = ctx.container
@@ -96,10 +98,11 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
             or orders_state.get("pending_field")
             or orders_state.get("awaiting_order_search_query")
         )
+        has_tracks_input = admin_tracks_has_pending(session)
         has_dialog_fsm = session.state != DialogState.IDLE
 
         if is_cancel_command(text):
-            if not (has_utils or has_broadcast or has_orders_edit or has_dialog_fsm):
+            if not (has_utils or has_broadcast or has_orders_edit or has_tracks_input or has_dialog_fsm):
                 raise SkipHandler
             await _clear_admin_input_states(container, session)
             if has_dialog_fsm:
@@ -111,7 +114,7 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
             )
             return
 
-        if is_navigation_command(text) and (has_utils or has_broadcast or has_orders_edit):
+        if is_navigation_command(text) and (has_utils or has_broadcast or has_orders_edit or has_tracks_input):
             await _clear_admin_input_states(container, session)
             if text in {"Профиль", "👤 Профиль"}:
                 await _open_user_profile_from_admin(message, container, callback_codec)
@@ -119,7 +122,7 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
             await message.answer("Предыдущий ввод отменён. Повторите нажатие кнопки.")
             return
 
-        if not has_utils and not has_broadcast:
+        if not has_utils and not has_broadcast and not has_tracks_input:
             has_orders_input = bool(
                 orders_state.get("awaiting_order_search_query")
                 or orders_state.get("bulk_field")
@@ -130,6 +133,15 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
             )
             if not has_orders_input:
                 raise SkipHandler
+
+        if await try_handle_admin_tracks_text(
+            message,
+            container=container,
+            payment_store=payment_store,
+            codec=callback_codec,
+            session=session,
+        ):
+            return
 
         edit_order = orders_state.get("edit_order")
         edit_field = orders_state.get("edit_field")

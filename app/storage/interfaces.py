@@ -185,6 +185,10 @@ class BuyoutOrderRepository(ABC):
     async def search_orders(self, by: str, query: str, limit: int = 30) -> list[BuyoutOrder]:
         raise NotImplementedError
 
+    @abstractmethod
+    async def list_orders_with_exact_tracks(self, tracks: list[str]) -> list[BuyoutOrder]:
+        raise NotImplementedError
+
 
 class OutboundMessageRepository(ABC):
     @abstractmethod

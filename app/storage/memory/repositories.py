@@ -271,16 +271,24 @@ class InMemoryBuyoutOrderRepository(BuyoutOrderRepository):
                 for order in rows
                 if order.track_number and needle in order.track_number.lower()
             ]
-        elif mode == "track":
-            matched = [
-                order
-                for order in rows
-                if order.track_number and needle in order.track_number.lower()
-            ]
         else:
             return []
         matched.sort(key=lambda item: item.created_at, reverse=True)
         return [deepcopy(row) for row in matched[:safe_limit]]
+
+    async def list_orders_with_exact_tracks(self, tracks: list[str]) -> list[BuyoutOrder]:
+        from app.services.track_match_utils import normalize_track
+
+        normalized = {normalize_track(item) for item in tracks if normalize_track(item)}
+        if not normalized:
+            return []
+        matched = [
+            order
+            for order in self._orders.values()
+            if order.track_number and normalize_track(order.track_number) in normalized
+        ]
+        matched.sort(key=lambda item: item.created_at, reverse=True)
+        return [deepcopy(row) for row in matched]
 
     async def update(self, order: BuyoutOrder) -> BuyoutOrder:
         if order.id not in self._orders:

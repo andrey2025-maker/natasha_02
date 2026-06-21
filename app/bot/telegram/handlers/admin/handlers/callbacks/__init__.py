@@ -61,10 +61,12 @@ def register_callbacks(router: Router, ctx: AdminContext) -> None:
     from app.bot.telegram.handlers.admin.handlers.callbacks.menu import register_menu_callbacks
     from app.bot.telegram.handlers.admin.handlers.callbacks.orders import register_orders_callbacks
     from app.bot.telegram.handlers.admin.handlers.callbacks.profiles import register_profiles_callbacks
+    from app.bot.telegram.handlers.admin.handlers.callbacks.tracks import register_tracks_callbacks
     from app.bot.telegram.handlers.admin.handlers.callbacks.utils import register_utils_callbacks
 
     sub = Router()
     register_menu_callbacks(sub, ctx)
+    register_tracks_callbacks(sub, ctx)
     register_faq_callbacks(sub, ctx)
     register_utils_callbacks(sub, ctx)
     register_broadcast_callbacks(sub, ctx)

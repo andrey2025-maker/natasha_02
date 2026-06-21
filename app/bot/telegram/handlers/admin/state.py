@@ -4,6 +4,12 @@ from app.bot.telegram.fsm_utils import admin_utils_has_waiter
 from app.bot.telegram.handlers.admin.orders import _get_admin_orders_state, _save_admin_orders_state
 from app.bot.telegram.handlers.content_utils_admin import reset_content_utils_state
 from app.bot.telegram.handlers.faq_admin import reset_faq_admin_state
+from app.bot.telegram.handlers.admin.tracks import (
+    _get_admin_tracks_state,
+    _save_admin_tracks_state,
+    admin_tracks_has_pending,
+    reset_admin_tracks_state,
+)
 from app.core.container import AppContainer
 
 def _get_admin_broadcast_state(session) -> dict:
@@ -205,6 +211,8 @@ def admin_session_has_pending(session) -> bool:
         or orders_state.get("awaiting_order_search_query")
     ):
         return True
+    if admin_tracks_has_pending(session):
+        return True
     return False
 
 
@@ -225,6 +233,9 @@ async def clear_admin_input_states(container: AppContainer, session) -> None:
     orders_state["awaiting_order_search_query"] = False
     orders_state["order_search_mode"] = None
     await _save_admin_orders_state(container, session, orders_state)
+    tracks_state = _get_admin_tracks_state(session)
+    reset_admin_tracks_state(tracks_state)
+    await _save_admin_tracks_state(container, session, tracks_state)
 
 
 async def _clear_admin_input_states(container: AppContainer, session) -> None:
