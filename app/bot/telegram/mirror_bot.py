@@ -141,12 +141,21 @@ class DialogMirrorBot(Bot):
 def _wrap_outgoing_method(method_name: str) -> None:
     original = getattr(DialogMirrorBot.__mro__[1], method_name)
 
-    async def wrapped(self: DialogMirrorBot, chat_id: int | str, /, *args: Any, **kwargs: Any) -> Any:
-        result = await original(self, chat_id, *args, **kwargs)
-        try:
-            await self._mirror_outgoing(chat_id, result if isinstance(result, (Message, MessageId)) else None)
-        except Exception:
-            pass
+    async def wrapped(self: DialogMirrorBot, *args: Any, **kwargs: Any) -> Any:
+        if args:
+            chat_id = args[0]
+            result = await original(self, *args, **kwargs)
+        else:
+            chat_id = kwargs.get("chat_id")
+            result = await original(self, **kwargs)
+        if chat_id is not None:
+            try:
+                await self._mirror_outgoing(
+                    chat_id,
+                    result if isinstance(result, (Message, MessageId)) else None,
+                )
+            except Exception:
+                pass
         return result
 
     setattr(DialogMirrorBot, method_name, wrapped)
