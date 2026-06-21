@@ -6,11 +6,14 @@ from app.bot.telegram.callbacks import CallbackCodec
 from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.handlers.admin.html import _h
 from app.bot.telegram.handlers.admin.media_helpers import _mark_blocked_bot_if_needed
+from app.bot.telegram.my_orders_media import present_admin_orders_panel
 from app.core.container import AppContainer
 from app.domain.enums import OrderStatus, Platform
 from app.domain.models import OutboundMessage
 from app.services.admin_tools_service import PaymentTextStore, send_stored_media_to_telegram
 from app.services.order_filter_config import DEFAULT_ORDER_FILTER_VALUES, ORDER_FILTER_STATUSES, order_filter_button_text
+from app.services.order_list_format import format_order_blockquote, order_status_title
+from app.services.order_media_utils import collect_order_media_dicts
 
 _ADMIN_ORDER_FILTER_STATUSES = ORDER_FILTER_STATUSES
 _DEFAULT_ADMIN_ORDER_STATUS_FILTERS = list(DEFAULT_ORDER_FILTER_VALUES)
@@ -101,6 +104,8 @@ async def _send_orders_panel(
     codec: CallbackCodec,
     user_id: int,
     state: dict,
+    session,
+    *,
     edit: bool = False,
 ) -> None:
     orders, total, total_pages = await _load_admin_orders_page(container, state)
@@ -108,21 +113,43 @@ async def _send_orders_panel(
     selected = set(state.get("selected", []))
     search_active = isinstance(state.get("search_results"), list) and bool(state.get("search_results"))
 
-    lines = ["<b>Заказы (массовое обновление)</b>"]
-    lines.append(f"Страница {page}/{total_pages}")
-    lines.append(f"Выбрано: {len(selected)}")
+    header_parts = [
+        "<b>Заказы (массовое обновление)</b>",
+        "",
+        f"Страница {page}/{total_pages}",
+        f"Выбрано: {len(selected)}",
+    ]
     if search_active:
-        lines.append(f"Поиск: найдено {total}")
-    lines.append("")
+        header_parts.append(f"Поиск: найдено {total}")
+
+    order_blocks: list[str] = []
+    order_media_groups: list[tuple[str, list[dict]]] = []
     if not orders:
-        lines.append("Заказов пока нет.")
+        order_blocks.append("Заказов пока нет.")
     else:
+        profile_cache: dict[int, object | None] = {}
         for order in orders:
             mark = "✅" if order.order_number in selected else "⬜️"
-            lines.append(
-                f"{mark} {_h(order.order_number)} — {_h(_order_status_name(order.status))} "
-                f"({order.updated_at.strftime('%d.%m.%y')})"
+            if order.user_profile_id not in profile_cache:
+                profile_cache[order.user_profile_id] = await container.profile_repo.get_by_id(order.user_profile_id)
+            profile = profile_cache[order.user_profile_id]
+            extra_lines: list[str] = []
+            if profile:
+                extra_lines.append(f"Клиент: {_h(profile.code)} / {_h(profile.name or '—')}")
+            history = await container.order_admin_service.history(order.id, limit=3)
+            header = f"{mark} <b>Выкуп №{_h(order.order_number)}</b>"
+            order_blocks.append(
+                format_order_blockquote(
+                    order,
+                    history,
+                    header_line=header,
+                    extra_lines=extra_lines or None,
+                )
             )
+            media_items = await container.buyout_repo.list_order_media(order.id)
+            media_dicts = collect_order_media_dicts(order, media_items)
+            if media_dicts:
+                order_media_groups.append((order.order_number, media_dicts))
 
     keyboard = _orders_keyboard(
         user_id,
@@ -134,11 +161,17 @@ async def _send_orders_panel(
         filter_states=_admin_orders_filter_states(state),
         search_active=search_active,
     )
-    text = "\n".join(lines)
-    if edit:
-        await edit_panel_message(message, text=text, parse_mode="HTML", reply_markup=keyboard)
-    else:
-        await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+    text = "\n".join(header_parts) + "\n\n" + "\n\n".join(order_blocks)
+    extra_ids = await present_admin_orders_panel(
+        message,
+        state,
+        text=text,
+        order_media_groups=order_media_groups,
+        reply_markup=keyboard,
+        replace_message=edit,
+    )
+    state["extra_media_message_ids"] = extra_ids
+    await _save_admin_orders_state(container, session, state)
 
 
 def _append_order_toggle_rows(
@@ -355,6 +388,9 @@ def _get_admin_orders_state(session) -> dict:
                 "awaiting_order_search_query": bool(block.get("awaiting_order_search_query")),
                 "order_search_mode": str(block.get("order_search_mode")) if block.get("order_search_mode") else None,
                 "search_results": search_results,
+                "extra_media_message_ids": [
+                    int(item) for item in block.get("extra_media_message_ids", []) if str(item).isdigit()
+                ],
             }
     return {
         "page": 1,
@@ -368,6 +404,7 @@ def _get_admin_orders_state(session) -> dict:
         "awaiting_order_search_query": False,
         "order_search_mode": None,
         "search_results": None,
+        "extra_media_message_ids": [],
     }
 
 
@@ -385,6 +422,7 @@ async def _save_admin_orders_state(container: AppContainer, session, state: dict
         "awaiting_order_search_query": bool(state.get("awaiting_order_search_query")),
         "order_search_mode": state.get("order_search_mode"),
         "search_results": state.get("search_results"),
+        "extra_media_message_ids": list(state.get("extra_media_message_ids") or []),
     }
     session.state_data = payload
     await container.session_repo.save(session)
@@ -558,18 +596,7 @@ def _parse_order_status(raw: str) -> OrderStatus | None:
 
 
 def _order_status_name(status: OrderStatus) -> str:
-    names = {
-        OrderStatus.PENDING: "Ожидание",
-        OrderStatus.PRICE_READY: "Цена готова",
-        OrderStatus.WAITING_PAYMENT: "Ожидает оплату",
-        OrderStatus.PAID_CHECK: "Проверка оплаты",
-        OrderStatus.PAID: "Оплачен",
-        OrderStatus.IN_TRANSIT: "В пути",
-        OrderStatus.PICKUP_POINT: "В пункте выдачи",
-        OrderStatus.ISSUED: "Выдан",
-        OrderStatus.CANCELLED: "Отменен",
-    }
-    return names.get(status, status.value)
+    return order_status_title(status)
 
 
 def _field_title(field_name: str) -> str:

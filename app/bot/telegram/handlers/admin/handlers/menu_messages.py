@@ -138,7 +138,7 @@ def register_menu_messages(router: Router, ctx: AdminContext) -> None:
         state["awaiting_order_search_query"] = False
         state["order_search_mode"] = None
         await _save_admin_orders_state(container, session, state)
-        await _send_orders_panel(message, container, callback_codec, message.from_user.id, state)
+        await _send_orders_panel(message, container, callback_codec, message.from_user.id, state, session)
 
     @router.message(F.text == "Самовыкуп")
     async def admin_orders_self_buyout(message: Message) -> None:

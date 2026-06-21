@@ -7,8 +7,7 @@ from app.domain.models import UserSession
 from app.services.admin_tools_service import send_stored_media_to_telegram
 
 
-async def clear_my_orders_media(bot, chat_id: int, session: UserSession) -> None:
-    raw_ids = session.state_data.get("my_orders_media_message_ids")
+async def _delete_message_ids(bot, chat_id: int, raw_ids: object) -> None:
     if not isinstance(raw_ids, list):
         return
     for raw_id in raw_ids:
@@ -16,17 +15,6 @@ async def clear_my_orders_media(bot, chat_id: int, session: UserSession) -> None
             await bot.delete_message(chat_id=chat_id, message_id=int(raw_id))
         except Exception:
             continue
-
-
-async def _save_extra_media_ids(
-    session: UserSession,
-    container: AppContainer,
-    extra_ids: list[int],
-) -> None:
-    state_data = dict(session.state_data)
-    state_data["my_orders_media_message_ids"] = extra_ids
-    session.state_data = state_data
-    await container.session_repo.save(session)
 
 
 def flatten_order_media_groups(groups: list[tuple[str, list[dict]]]) -> list[dict]:
@@ -46,29 +34,23 @@ def flatten_order_media_groups(groups: list[tuple[str, list[dict]]]) -> list[dic
     return result
 
 
-async def present_my_orders_panel(
+async def _deliver_orders_panel(
     message: Message,
-    session: UserSession,
-    container: AppContainer,
     *,
     text: str,
-    order_media_groups: list[tuple[str, list[dict]]],
+    media_items: list[dict],
     reply_markup,
-    replace_message: bool = False,
-) -> None:
-    await clear_my_orders_media(message.bot, message.chat.id, session)
-
+    replace_message: bool,
+) -> list[int]:
     if replace_message:
         try:
             await message.delete()
         except Exception:
             pass
 
-    media_items = flatten_order_media_groups(order_media_groups)
     if not media_items:
         await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
-        await _save_extra_media_ids(session, container, [])
-        return
+        return []
 
     bot = message.bot
     chat_id = message.chat.id
@@ -85,4 +67,63 @@ async def present_my_orders_panel(
         sent = await send_stored_media_to_telegram(bot, chat_id, media, caption="")
         if sent and sent.message_id:
             extra_ids.append(int(sent.message_id))
-    await _save_extra_media_ids(session, container, extra_ids)
+    return extra_ids
+
+
+async def clear_my_orders_media(bot, chat_id: int, session: UserSession) -> None:
+    await _delete_message_ids(bot, chat_id, session.state_data.get("my_orders_media_message_ids"))
+
+
+async def _save_my_orders_extra_media_ids(
+    session: UserSession,
+    container: AppContainer,
+    extra_ids: list[int],
+) -> None:
+    state_data = dict(session.state_data)
+    state_data["my_orders_media_message_ids"] = extra_ids
+    session.state_data = state_data
+    await container.session_repo.save(session)
+
+
+async def present_my_orders_panel(
+    message: Message,
+    session: UserSession,
+    container: AppContainer,
+    *,
+    text: str,
+    order_media_groups: list[tuple[str, list[dict]]],
+    reply_markup,
+    replace_message: bool = False,
+) -> None:
+    await clear_my_orders_media(message.bot, message.chat.id, session)
+    extra_ids = await _deliver_orders_panel(
+        message,
+        text=text,
+        media_items=flatten_order_media_groups(order_media_groups),
+        reply_markup=reply_markup,
+        replace_message=replace_message,
+    )
+    await _save_my_orders_extra_media_ids(session, container, extra_ids)
+
+
+async def clear_admin_orders_extra_media(bot, chat_id: int, state: dict) -> None:
+    await _delete_message_ids(bot, chat_id, state.get("extra_media_message_ids"))
+
+
+async def present_admin_orders_panel(
+    message: Message,
+    state: dict,
+    *,
+    text: str,
+    order_media_groups: list[tuple[str, list[dict]]],
+    reply_markup,
+    replace_message: bool = False,
+) -> list[int]:
+    await clear_admin_orders_extra_media(message.bot, message.chat.id, state)
+    return await _deliver_orders_panel(
+        message,
+        text=text,
+        media_items=flatten_order_media_groups(order_media_groups),
+        reply_markup=reply_markup,
+        replace_message=replace_message,
+    )

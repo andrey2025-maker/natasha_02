@@ -595,6 +595,7 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
                 callback_codec,
                 message.from_user.id,
                 state,
+                session,
             )
             return
 

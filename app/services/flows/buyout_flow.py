@@ -5,12 +5,14 @@ from datetime import datetime
 from html import escape
 from urllib.parse import urlparse
 
-from app.bot.telegram.fsm_utils import fsm_prompt
 from app.services.order_filter_config import (
     DEFAULT_ORDER_FILTER_VALUES,
     ORDER_FILTER_STATUSES,
     order_filter_title,
 )
+from app.services.order_list_format import format_order_blockquote, order_status_title
+from app.services.order_media_utils import collect_order_media_dicts
+from app.bot.telegram.fsm_utils import fsm_prompt
 from app.domain.enums import DeliveryFlowType, DialogState, OrderStatus, Platform
 from app.domain.models import BuyoutOrder, OrderMediaItem, OrderStatusHistoryItem, UserProfile, UserSession
 from app.services.user_preferences_store import UserPreferencesStore
@@ -211,25 +213,11 @@ class BuyoutFlowService:
         order_media_groups: list[tuple[str, list[dict]]] = []
         for order in orders:
             history = await self._orders.list_status_history(order.id, limit=3)
-            history_text = _format_history_short(history)
             media_items = await self._orders.list_order_media(order.id)
-            media_dicts = _collect_order_media_dicts(order, media_items)
+            media_dicts = collect_order_media_dicts(order, media_items)
             if media_dicts:
                 order_media_groups.append((order.order_number, media_dicts))
-            order_lines = [f"<b>Выкуп №{_h(order.order_number)}</b>"]
-            order_lines.extend(
-                [
-                    f"Статус: <b>{_h(_status_title(order.status))}</b> ({order.updated_at.strftime('%d.%m.%y')})",
-                    f"Цена: {_h(order.price_rub if order.price_rub is not None else '—')}",
-                    f"Ссылка: {_h(order.product_url)}",
-                    f"Детали: {_h(order.quantity_text)}",
-                    f"Комментарий: {_h(order.manager_comment or '—')}",
-                    f"Трек: {_h(order.track_number or '—')}",
-                    history_text,
-                ]
-            )
-            order_block = "\n".join(order_lines)
-            lines.append(f"<blockquote expandable>{order_block}</blockquote>")
+            lines.append(format_order_blockquote(order, history))
 
         total_pages = (total + page_size - 1) // page_size
         text = (
@@ -400,30 +388,13 @@ def _is_likely_url(text: str) -> bool:
 
 
 def _status_title(status: OrderStatus) -> str:
-    titles = {
-        OrderStatus.PENDING: "Ожидание",
-        OrderStatus.PRICE_READY: "Цена готова",
-        OrderStatus.WAITING_PAYMENT: "Ожидает оплату",
-        OrderStatus.PAID_CHECK: "Проверка оплаты",
-        OrderStatus.PAID: "Оплачен",
-        OrderStatus.IN_TRANSIT: "В пути",
-        OrderStatus.PICKUP_POINT: "В пункте выдачи",
-        OrderStatus.ISSUED: "Выдан",
-        OrderStatus.CANCELLED: "Отменен",
-    }
-    return titles.get(status, status.value)
+    return order_status_title(status)
 
 
 def _format_history_short(items: list[OrderStatusHistoryItem]) -> str:
-    if not items:
-        return "История: —"
-    lines = ["История:"]
-    for item in items:
-        prev = _status_title(item.previous_status) if item.previous_status else "—"
-        lines.append(
-            f"- {item.changed_at.strftime('%d.%m.%y')} {prev} → {_status_title(item.new_status)}"
-        )
-    return "\n".join(lines)
+    from app.services.order_list_format import format_order_history_short
+
+    return format_order_history_short(items)
 
 
 def _safe_int(value: object) -> int | None:
@@ -438,56 +409,6 @@ def _safe_int(value: object) -> int | None:
 def _safe_str(value: object) -> str | None:
     text = str(value or "").strip()
     return text or None
-
-
-def _order_media_item_to_stored_dict(item: OrderMediaItem) -> dict | None:
-    media_type = str(item.media_type or "").strip()
-    file_id = str(item.tg_file_id or "").strip()
-    storage_chat_id = int(item.tg_chat_id) if item.tg_chat_id else None
-    storage_message_id = int(item.tg_message_id) if item.tg_message_id else None
-    if storage_chat_id and storage_message_id:
-        return {
-            "media_type": media_type if media_type in {"photo", "video", "animation", "document"} else "photo",
-            "file_id": file_id,
-            "storage_chat_id": storage_chat_id,
-            "storage_message_id": storage_message_id,
-        }
-    if file_id and media_type in {"photo", "video", "animation", "document"}:
-        return {
-            "media_type": media_type,
-            "file_id": file_id,
-            "storage_chat_id": None,
-            "storage_message_id": None,
-        }
-    return None
-
-
-def _collect_order_media_dicts(order: BuyoutOrder, items: list[OrderMediaItem]) -> list[dict]:
-    result: list[dict] = []
-    seen: set[tuple[int | None, int | None, str]] = set()
-    for item in items:
-        media = _order_media_item_to_stored_dict(item)
-        if not media:
-            continue
-        key = (
-            media.get("storage_chat_id"),
-            media.get("storage_message_id"),
-            str(media.get("file_id", "")),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(media)
-    if not result and order.media_storage_chat_id and order.media_storage_message_id:
-        result.append(
-            {
-                "media_type": "photo",
-                "file_id": "",
-                "storage_chat_id": int(order.media_storage_chat_id),
-                "storage_message_id": int(order.media_storage_message_id),
-            }
-        )
-    return result
 
 
 def _dedupe_media_items(items: list[dict]) -> list[dict]:

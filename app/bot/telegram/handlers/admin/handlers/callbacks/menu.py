@@ -112,7 +112,15 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
                 state["order_search_mode"] = None
                 await _save_admin_orders_state(container, session, state)
                 await callback.answer()
-                await _send_orders_panel(callback.message, container, callback_codec, callback.from_user.id, state, edit=True)
+                await _send_orders_panel(
+                    callback.message,
+                    container,
+                    callback_codec,
+                    callback.from_user.id,
+                    state,
+                    session,
+                    edit=True,
+                )
                 return
             if menu_action == "stats":
                 text = await container.stats_service.build_overview_text()
