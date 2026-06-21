@@ -78,20 +78,7 @@ async def edit_content_with_media(
         )
         return
 
-    if message_has_media(message):
-        try:
-            await message.edit_caption(
-                caption=text,
-                parse_mode=parse_mode,
-                reply_markup=reply_markup,
-            )
-            await _mirror_private_panel_message(message)
-            return
-        except TelegramBadRequest as exc:
-            error_text = str(exc).lower()
-            if "message is not modified" in error_text:
-                return
-
+    # Telegram cannot replace photo/video via edit — always resend when media is shown.
     try:
         await message.delete()
     except Exception:

@@ -8,7 +8,7 @@ from aiogram.exceptions import TelegramForbiddenError
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, ReactionTypeEmoji
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
-from app.bot.telegram.callback_panel import edit_content_with_media, edit_panel_message
+from app.bot.telegram.callback_panel import edit_content_with_media, edit_panel_message, message_has_media
 from app.bot.telegram.bot_api import api_copy_message, api_send_message
 from app.bot.telegram.mirror_bot import skip_dialog_mirror
 from app.core.container import AppContainer
@@ -257,6 +257,13 @@ async def _send_section(
         return
 
     if edit:
+        if message_has_media(message):
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+            return
         await edit_panel_message(
             message,
             text=text,
@@ -306,13 +313,13 @@ def _faq_keyboard(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="🏠 К разделам",
+                    text="🏠 В начало",
                     callback_data=codec.encode("faq:root", user_id),
                 )
             ]
         )
     if not rows:
-        rows = [[InlineKeyboardButton(text="🏠 К разделам", callback_data=codec.encode("faq:root", user_id))]]
+        rows = [[InlineKeyboardButton(text="🏠 В начало", callback_data=codec.encode("faq:root", user_id))]]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

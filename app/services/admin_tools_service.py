@@ -7,9 +7,11 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Iterable
 
 import asyncpg
+from aiogram.types import Message, MessageId
 
 from app.domain.enums import Platform
 from app.domain.models import BuyoutOrder, UserProfile
@@ -1547,6 +1549,17 @@ async def send_stored_media_group_to_telegram(
     return ids
 
 
+def _as_sent_message(chat_id: int, sent: Message | MessageId | None):
+    if sent is None:
+        return None
+    if isinstance(sent, Message):
+        return sent
+    message_id = getattr(sent, "message_id", None)
+    if message_id is None:
+        return None
+    return SimpleNamespace(chat=SimpleNamespace(id=int(chat_id)), message_id=int(message_id))
+
+
 async def send_stored_media_to_telegram(
     bot,
     chat_id: int,
@@ -1567,7 +1580,7 @@ async def send_stored_media_to_telegram(
         source_message_id = None
     if source_chat_id and source_message_id:
         try:
-            return await bot.copy_message(
+            copied = await bot.copy_message(
                 chat_id=chat_id,
                 from_chat_id=source_chat_id,
                 message_id=source_message_id,
@@ -1575,6 +1588,7 @@ async def send_stored_media_to_telegram(
                 parse_mode=parse_mode if resolved_caption else None,
                 reply_markup=reply_markup,
             )
+            return _as_sent_message(chat_id, copied)
         except Exception:
             pass
 
@@ -1589,13 +1603,13 @@ async def send_stored_media_to_telegram(
         "reply_markup": reply_markup,
     }
     if media_type == "photo":
-        return await bot.send_photo(photo=file_id, **send_kwargs)
+        return _as_sent_message(chat_id, await bot.send_photo(photo=file_id, **send_kwargs))
     if media_type == "video":
-        return await bot.send_video(video=file_id, **send_kwargs)
+        return _as_sent_message(chat_id, await bot.send_video(video=file_id, **send_kwargs))
     if media_type == "animation":
-        return await bot.send_animation(animation=file_id, **send_kwargs)
+        return _as_sent_message(chat_id, await bot.send_animation(animation=file_id, **send_kwargs))
     if media_type == "document":
-        return await bot.send_document(document=file_id, **send_kwargs)
+        return _as_sent_message(chat_id, await bot.send_document(document=file_id, **send_kwargs))
     return None
 
 

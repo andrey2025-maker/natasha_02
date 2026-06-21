@@ -118,7 +118,7 @@ async def _publish_panel_message(
             reply_markup=keyboard,
         )
 
-    utils_state["content_utils_panel_chat_id"] = int(sent.chat.id)
+    utils_state["content_utils_panel_chat_id"] = int(getattr(getattr(sent, "chat", None), "id", None) or chat_id)
     utils_state["content_utils_panel_message_id"] = int(sent.message_id)
 
     if old_message_id and int(old_message_id) != int(sent.message_id):
