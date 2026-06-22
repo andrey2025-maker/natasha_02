@@ -231,7 +231,11 @@ class BuyoutFlowService:
         if profile is None:
             profile = await self._profiles.get_by_platform_user(session.platform, session.platform_user_id)
         if not profile:
-            return BuyoutFlowResponse("Сначала заполните профиль.", DialogState.IDLE, {})
+            return BuyoutFlowResponse(
+                "Сначала заполните профиль.",
+                DialogState.IDLE,
+                {"page": 1, "total_pages": 1},
+            )
 
         statuses = self._get_query_statuses(session)
         safe_page = max(1, page)
@@ -246,7 +250,11 @@ class BuyoutFlowService:
             ),
         )
         if total == 0:
-            return BuyoutFlowResponse("По текущим фильтрам заказов нет.", DialogState.IDLE, {})
+            return BuyoutFlowResponse(
+                "По текущим фильтрам заказов нет.",
+                DialogState.IDLE,
+                {"page": 1, "total_pages": 1},
+            )
 
         if not orders and safe_page > 1:
             safe_page -= 1

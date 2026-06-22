@@ -8,11 +8,12 @@ from aiogram.types import Message
 from app.bot.telegram.callback_panel import edit_panel_message
 from app.core.container import AppContainer
 from app.domain.models import UserSession
-from app.services.admin_tools_service import clip_html_caption, send_stored_media_group_to_telegram
+from app.services.admin_tools_service import (
+    clip_html_caption,
+    send_stored_media_group_to_telegram,
+)
 
 logger = logging.getLogger(__name__)
-
-MY_ORDERS_LOADING_TEXT = "<b>Мои заказы</b>\n\n<i>Загрузка…</i>"
 
 
 async def _delete_message_ids(bot, chat_id: int, raw_ids: object) -> None:
@@ -40,6 +41,28 @@ def flatten_order_media_groups(groups: list[tuple[str, list[dict]]]) -> list[dic
             seen.add(key)
             result.append(item)
     return result
+
+
+async def _ensure_reply_markup(bot, chat_id: int, message_id: int, reply_markup) -> None:
+    if not reply_markup:
+        return
+    for attempt in range(3):
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=chat_id,
+                message_id=message_id,
+                reply_markup=reply_markup,
+            )
+            return
+        except Exception:
+            if attempt < 2:
+                await asyncio.sleep(0.15 * (attempt + 1))
+            else:
+                logger.exception(
+                    "Failed to attach my orders reply_markup (chat_id=%s message_id=%s)",
+                    chat_id,
+                    message_id,
+                )
 
 
 async def _deliver_orders_panel(
@@ -74,6 +97,7 @@ async def _deliver_orders_panel(
     if not all_ids:
         await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
         return []
+    await _ensure_reply_markup(bot, chat_id, all_ids[0], reply_markup)
     return all_ids[1:]
 
 
@@ -92,65 +116,34 @@ async def _save_my_orders_extra_media_ids(
     await container.session_repo.save(session)
 
 
-async def present_my_orders_panel_fast(
+async def present_my_orders_panel(
     message: Message,
-    session: UserSession,
-    *,
-    text: str,
-    reply_markup,
-    replace_message: bool = False,
-) -> Message:
-    raw_ids = session.state_data.get("my_orders_media_message_ids")
-    if isinstance(raw_ids, list) and raw_ids:
-        asyncio.create_task(clear_my_orders_media(message.bot, message.chat.id, session))
-    state_data = dict(session.state_data)
-    state_data["my_orders_media_message_ids"] = []
-    session.state_data = state_data
-    if replace_message:
-        try:
-            await message.delete()
-        except Exception:
-            pass
-    return await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
-
-
-async def enrich_my_orders_panel(
-    panel_message: Message,
     session: UserSession,
     container: AppContainer,
     *,
     text: str,
     order_media_groups: list[tuple[str, list[dict]]],
     reply_markup,
-    panel_version: int,
+    replace_message: bool = False,
 ) -> None:
-    try:
-        if int(session.state_data.get("_my_orders_panel_version", 0)) != panel_version:
-            return
-        if order_media_groups:
-            extra_ids = await _deliver_orders_panel(
-                panel_message,
-                text=text,
-                media_items=flatten_order_media_groups(order_media_groups),
-                reply_markup=reply_markup,
-                replace_message=True,
-            )
+    await clear_my_orders_media(message.bot, message.chat.id, session)
+    media_items = flatten_order_media_groups(order_media_groups)
+    if not media_items:
+        if replace_message:
+            await edit_panel_message(message, text=text, reply_markup=reply_markup)
+            extra_ids: list[int] = []
         else:
-            await edit_panel_message(panel_message, text=text, reply_markup=reply_markup)
+            await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
             extra_ids = []
-            if reply_markup is not None:
-                try:
-                    await panel_message.edit_reply_markup(reply_markup=reply_markup)
-                except Exception:
-                    pass
-        if int(session.state_data.get("_my_orders_panel_version", 0)) != panel_version:
-            return
-        state_data = dict(session.state_data)
-        state_data["my_orders_media_message_ids"] = extra_ids
-        session.state_data = state_data
-        await container.session_repo.save(session)
-    except Exception:
-        logger.exception("Failed to enrich my orders panel")
+    else:
+        extra_ids = await _deliver_orders_panel(
+            message,
+            text=text,
+            media_items=media_items,
+            reply_markup=reply_markup,
+            replace_message=replace_message,
+        )
+    await _save_my_orders_extra_media_ids(session, container, extra_ids)
 
 
 async def open_my_orders_panel(
@@ -165,65 +158,23 @@ async def open_my_orders_panel(
     replace_message: bool = False,
     profile=None,
 ) -> None:
-    state_data = dict(session.state_data)
-    state_data["_my_orders_panel_version"] = int(state_data.get("_my_orders_panel_version", 0)) + 1
-    panel_version = int(state_data["_my_orders_panel_version"])
-    session.state_data = state_data
-
-    panel_message = await present_my_orders_panel_fast(
+    await buyout_flow.prepare_preferences(session, persist=True)
+    response = await buyout_flow.render_orders(
+        session,
+        page=page,
+        include_details=True,
+        profile=profile,
+    )
+    markup = await build_reply_markup(user_id, session, response)
+    await present_my_orders_panel(
         message,
         session,
-        text=MY_ORDERS_LOADING_TEXT,
-        reply_markup=None,
+        container,
+        text=response.text,
+        order_media_groups=response.order_media_groups,
+        reply_markup=markup,
         replace_message=replace_message,
     )
-
-    async def finalize() -> None:
-        try:
-            await buyout_flow.prepare_preferences(session, persist=True)
-            if int(session.state_data.get("_my_orders_panel_version", 0)) != panel_version:
-                return
-            detailed = await buyout_flow.render_orders(
-                session,
-                page=page,
-                include_details=True,
-                profile=profile,
-            )
-            markup = await build_reply_markup(user_id, session, detailed)
-            await enrich_my_orders_panel(
-                panel_message,
-                session,
-                container,
-                text=detailed.text,
-                order_media_groups=detailed.order_media_groups,
-                reply_markup=markup,
-                panel_version=panel_version,
-            )
-        except Exception:
-            logger.exception("Failed to finalize my orders panel")
-
-    asyncio.create_task(finalize())
-
-
-async def present_my_orders_panel(
-    message: Message,
-    session: UserSession,
-    container: AppContainer,
-    *,
-    text: str,
-    order_media_groups: list[tuple[str, list[dict]]],
-    reply_markup,
-    replace_message: bool = False,
-) -> None:
-    await clear_my_orders_media(message.bot, message.chat.id, session)
-    extra_ids = await _deliver_orders_panel(
-        message,
-        text=text,
-        media_items=flatten_order_media_groups(order_media_groups),
-        reply_markup=reply_markup,
-        replace_message=replace_message,
-    )
-    await _save_my_orders_extra_media_ids(session, container, extra_ids)
 
 
 async def clear_admin_orders_extra_media(bot, chat_id: int, state: dict) -> None:
