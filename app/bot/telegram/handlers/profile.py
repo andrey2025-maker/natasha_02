@@ -218,24 +218,25 @@ def build_profile_router(container: AppContainer) -> Router:
     async def profile_menu(message: Message) -> None:
         if not message.from_user:
             return
-        profile = await container.profile_repo.get_by_platform_user(platform, message.from_user.id)
-        if profile and profile.is_blocked_by_admin:
-            await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
-            return
-        if profile and profile.is_filled:
-            text = msg.profile_summary(profile)
-        else:
-            text = msg.profile_intro()
-        reply_markup = profile_menu_keyboard(
-            "ВК",
-            message.from_user.id,
-            callback_codec,
-            profile=profile,
+        user_id = message.from_user.id
+        panel = await message.answer(
+            msg.profile_intro(),
+            parse_mode="HTML",
+            reply_markup=profile_menu_keyboard("ВК", user_id, callback_codec, profile=None),
         )
-        await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
 
         async def finalize_profile_menu() -> None:
             try:
+                profile = await container.profile_repo.get_by_platform_user(platform, user_id)
+                if profile and profile.is_blocked_by_admin:
+                    await edit_panel_message(
+                        panel,
+                        text="Ваш доступ ограничен администратором. Обратитесь в поддержку.",
+                    )
+                    return
+                text = msg.profile_summary(profile) if profile and profile.is_filled else msg.profile_intro()
+                reply_markup = profile_menu_keyboard("ВК", user_id, callback_codec, profile=profile)
+                await edit_panel_message(panel, text=text, reply_markup=reply_markup)
                 if profile is not None and getattr(profile, "telegram_user_id", None):
                     schedule_refresh_dialog_topic_profile(
                         message.bot,
@@ -245,22 +246,18 @@ def build_profile_router(container: AppContainer) -> Router:
                         topic_dialog_store=topic_dialog_store,
                         notification_settings_store=notification_settings_store,
                     )
-                existing_session = await fetch_user_session(
-                    container,
-                    platform,
-                    message.from_user.id,
-                )
+                existing_session = await fetch_user_session(container, platform, user_id)
                 session = await container.profile_flow.ensure_session(
                     platform,
-                    message.from_user.id,
+                    user_id,
                     known_profile=profile,
                     existing_session=existing_session,
                 )
                 await container.profile_flow.persist_idle_menu_state(session)
-                if await container.admin_service.is_admin(message.from_user.id):
+                if await container.admin_service.is_admin(user_id):
                     await clear_admin_input_states(container, session)
             except Exception:
-                logger.exception("Failed to finalize profile menu for user_id=%s", message.from_user.id)
+                logger.exception("Failed to finalize profile menu for user_id=%s", user_id)
 
         asyncio.create_task(finalize_profile_menu())
 

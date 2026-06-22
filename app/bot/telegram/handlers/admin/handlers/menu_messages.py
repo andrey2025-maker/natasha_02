@@ -168,14 +168,30 @@ def register_menu_messages(router: Router, ctx: AdminContext) -> None:
             return
         if not message.from_user:
             return
-        session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
-        state = _get_admin_orders_state(session)
-        state["page"] = 1
-        state["search_results"] = None
-        state["awaiting_order_search_query"] = False
-        state["order_search_mode"] = None
-        await _save_admin_orders_state(container, session, state)
-        await _send_orders_panel(message, container, callback_codec, message.from_user.id, state, session)
+        user_id = message.from_user.id
+        loading = await message.answer(ADMIN_ORDERS_LOADING_TEXT, parse_mode="HTML")
+
+        async def bootstrap_admin_orders() -> None:
+            try:
+                session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, user_id)
+                state = _get_admin_orders_state(session)
+                state["page"] = 1
+                state["search_results"] = None
+                state["awaiting_order_search_query"] = False
+                state["order_search_mode"] = None
+                await _save_admin_orders_state(container, session, state)
+                await _send_orders_panel(
+                    loading,
+                    container,
+                    callback_codec,
+                    user_id,
+                    state,
+                    session,
+                )
+            except Exception:
+                logger.exception("Failed to open admin buyout orders for user_id=%s", user_id)
+
+        asyncio.create_task(bootstrap_admin_orders())
 
     @router.message(F.text == "Самовыкуп")
     async def admin_orders_self_buyout(message: Message) -> None:

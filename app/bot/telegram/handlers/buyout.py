@@ -58,19 +58,22 @@ def build_buyout_router(container: AppContainer) -> Router:
     _buyout_text_state_filter = DialogStatesFilter(*BUYOUT_TEXT_STATES, container=container)
     _buyout_media_state_filter = DialogStatesFilter(*BUYOUT_MEDIA_STATES, container=container)
 
-    async def _reply(message: Message, response: BuyoutFlowResponse) -> None:
-        kwargs = {"parse_mode": "HTML"}
+    async def _buyout_reply_markup(message: Message, response: BuyoutFlowResponse):
         if response.reply_markup is not None:
-            kwargs["reply_markup"] = response.reply_markup
-        elif response.state == DialogState.BUYOUT_ADD_MORE and message.from_user:
-            kwargs["reply_markup"] = buyout_add_more_inline_keyboard(
+            return response.reply_markup
+        if response.state == DialogState.BUYOUT_ADD_MORE and message.from_user:
+            return buyout_add_more_inline_keyboard(
                 user_id=message.from_user.id,
                 codec=callback_codec,
             )
-        elif response.state == DialogState.IDLE:
+        if response.state == DialogState.IDLE:
             is_admin = bool(message.from_user and await container.admin_service.is_admin(message.from_user.id))
-            kwargs["reply_markup"] = main_menu_keyboard(include_admin=is_admin)
-        await message.answer(response.text, **kwargs)
+            return main_menu_keyboard(include_admin=is_admin)
+        return None
+
+    async def _reply(message: Message, response: BuyoutFlowResponse) -> None:
+        reply_markup = await _buyout_reply_markup(message, response)
+        await message.answer(response.text, parse_mode="HTML", reply_markup=reply_markup)
 
     @router.message(F.text.in_({"Заказ выкупа", "🛍 Заказ выкупа"}))
     async def start_buyout(message: Message, user_session=None) -> None:
@@ -79,16 +82,29 @@ def build_buyout_router(container: AppContainer) -> Router:
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        session = await resolve_user_session(
-            handler_data(user_session),
-            container,
-            platform,
-            message.from_user.id,
-        )
-        if session is None:
-            return
-        response = await container.buyout_flow.start(session)
-        await _reply(message, response)
+        loading = await message.answer("🛍 <b>Заказ выкупа</b>\n\n<i>Загрузка…</i>", parse_mode="HTML")
+
+        async def bootstrap_buyout() -> None:
+            try:
+                session = await resolve_user_session(
+                    handler_data(user_session),
+                    container,
+                    platform,
+                    message.from_user.id,
+                )
+                if session is None:
+                    return
+                response = await container.buyout_flow.start(session)
+                reply_markup = await _buyout_reply_markup(message, response)
+                await edit_panel_message(
+                    loading,
+                    text=response.text,
+                    reply_markup=reply_markup,
+                )
+            except Exception:
+                logger.exception("Failed to start buyout for user_id=%s", message.from_user.id)
+
+        asyncio.create_task(bootstrap_buyout())
 
     def _orders_reply_markup(
         user_id: int,
