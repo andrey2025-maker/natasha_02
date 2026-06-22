@@ -4,6 +4,7 @@ from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
+from app.bot.telegram.handler_session import handler_data, resolve_user_session
 from app.bot.telegram.fsm_utils import is_cancel_command
 from app.bot.telegram.handlers.admin import admin_session_has_pending, clear_admin_input_states
 from app.bot.texts import messages as msg
@@ -31,10 +32,17 @@ def build_start_router(container: AppContainer) -> Router:
         await message.answer(msg.welcome_text(), reply_markup=main_menu_keyboard(include_admin=is_admin))
 
     @router.message(F.text.func(lambda text: is_cancel_command(text)))
-    async def cancel_fsm_handler(message: Message) -> None:
+    async def cancel_fsm_handler(message: Message, user_session=None) -> None:
         if not message.from_user:
             return
-        session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
+        session = await resolve_user_session(
+            handler_data(user_session),
+            container,
+            Platform.TELEGRAM,
+            message.from_user.id,
+        )
+        if session is None:
+            return
         is_admin = await container.admin_service.is_admin(message.from_user.id)
         had_input = session.state != DialogState.IDLE
         if is_admin and admin_session_has_pending(session):

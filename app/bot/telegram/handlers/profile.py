@@ -11,6 +11,9 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
 from app.bot.telegram.callback_panel import edit_panel_message
+from app.bot.telegram.dialog_state_groups import BUYOUT_ALL_STATES, PROFILE_AND_TRACK_INPUT_STATES
+from app.bot.telegram.filters.dialog_state import DialogStatesFilter
+from app.bot.telegram.handler_session import handler_data, resolve_user_session
 from app.bot.telegram.keyboards.main_menu import my_orders_message_keyboard
 from app.bot.telegram.keyboards.profile import (
     platforms_keyboard,
@@ -152,14 +155,8 @@ def build_profile_router(container: AppContainer) -> Router:
     async def _is_blocked_user(user_id: int) -> bool:
         return await is_user_blocked_by_admin(container, user_id)
 
-    _BUYOUT_SKIP_STATES = frozenset(
-        {
-            DialogState.BUYOUT_WAIT_MEDIA,
-            DialogState.BUYOUT_WAIT_LINK,
-            DialogState.BUYOUT_WAIT_DETAILS,
-            DialogState.BUYOUT_ADD_MORE,
-        }
-    )
+    _profile_input_state_filter = DialogStatesFilter(*PROFILE_AND_TRACK_INPUT_STATES)
+    _not_buyout_media_filter = ~DialogStatesFilter(*BUYOUT_ALL_STATES)
 
     async def _post_user_tracks_to_group(
         message: Message,
@@ -472,36 +469,21 @@ def build_profile_router(container: AppContainer) -> Router:
         await callback.answer()
         await _apply_response(callback.message, response, edit=True)
 
-    @router.message(F.photo | F.video | F.animation | F.document)
+    @router.message(_not_buyout_media_filter, F.photo | F.video | F.animation | F.document)
     async def profile_idle_media_flow(message: Message) -> None:
         if not message.from_user:
             raise SkipHandler
         if message.chat.type != "private":
             raise SkipHandler
+
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
-        if await container.admin_service.is_admin(message.from_user.id):
-            return
-        user_key = f"tg:{message.from_user.id}"
-        if not container.rate_limiter.allow_request(user_key, "<media>"):
-            return
-        media_size_bytes = (
-            (message.photo[-1].file_size if message.photo else None)
-            or (message.video.file_size if message.video else None)
-            or (message.animation.file_size if message.animation else None)
-            or (message.document.file_size if message.document else None)
-        )
-        media_size_mb = int(media_size_bytes / (1024 * 1024)) if media_size_bytes else None
-        if not container.rate_limiter.validate_user_payload_size(text_size=0, media_size_mb=media_size_mb):
-            await message.answer("Файл слишком большой. Максимум 20 МБ.")
-            return
-        if session.state != DialogState.IDLE:
-            raise SkipHandler
 
-    @router.message(F.text)
-    async def profile_text_flow(message: Message) -> None:
+        raise SkipHandler
+
+    @router.message(_profile_input_state_filter, F.text)
+    async def profile_text_flow(message: Message, user_session=None) -> None:
         if not message.from_user or not message.text:
             raise SkipHandler
         if message.chat.type != "private":
@@ -513,16 +495,18 @@ def build_profile_router(container: AppContainer) -> Router:
         if message.text.startswith("/"):
             raise SkipHandler
 
-        session = await container.session_repo.get(platform, message.from_user.id)
-        if session and session.state in _BUYOUT_SKIP_STATES:
-            raise SkipHandler
-
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
 
+        session = await resolve_user_session(
+            handler_data(user_session),
+            container,
+            platform,
+            message.from_user.id,
+        )
         if session is None:
-            session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
+            raise SkipHandler
         if session.state in {DialogState.TRACK_WAIT_INPUT, DialogState.TRACK_WAIT_CONTINUE}:
             response = await container.track_flow.handle_text(session, message.text)
             response.reply_markup = _track_reply_markup(message.from_user.id, response.state)
@@ -537,8 +521,6 @@ def build_profile_router(container: AppContainer) -> Router:
         if not container.rate_limiter.validate_user_payload_size(len(message.text)):
             await message.answer("Сообщение слишком длинное.")
             return
-        if session.state == DialogState.IDLE:
-            raise SkipHandler
 
         response = await container.profile_flow.handle_text(session, message.text, callback_codec=callback_codec)
         await _apply_response(message, response)

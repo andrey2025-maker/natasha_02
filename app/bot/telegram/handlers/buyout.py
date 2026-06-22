@@ -14,12 +14,14 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
 from app.bot.telegram.callback_panel import edit_content_with_media, edit_panel_message
+from app.bot.telegram.dialog_state_groups import BUYOUT_MEDIA_STATES, BUYOUT_TEXT_STATES
+from app.bot.telegram.filters.dialog_state import DialogStatesFilter
+from app.bot.telegram.handler_session import handler_data, resolve_user_session
 from app.bot.telegram.keyboards.profile import (
     buyout_add_more_inline_keyboard,
     main_menu_keyboard,
     my_orders_message_keyboard,
 )
-from app.bot.telegram.menu_texts import DELEGATED_MENU_TEXTS
 from app.bot.telegram.my_orders_media import MY_ORDERS_LOADING_TEXT, open_my_orders_panel
 from app.bot.telegram.user_access import is_user_blocked_by_admin
 from app.core.container import AppContainer
@@ -53,13 +55,8 @@ def build_buyout_router(container: AppContainer) -> Router:
     async def _is_blocked_user(user_id: int) -> bool:
         return await is_user_blocked_by_admin(container, user_id)
 
-    _BUYOUT_TEXT_STATES = frozenset(
-        {
-            DialogState.BUYOUT_WAIT_LINK,
-            DialogState.BUYOUT_WAIT_DETAILS,
-            DialogState.BUYOUT_ADD_MORE,
-        }
-    )
+    _buyout_text_state_filter = DialogStatesFilter(*BUYOUT_TEXT_STATES)
+    _buyout_media_state_filter = DialogStatesFilter(*BUYOUT_MEDIA_STATES)
 
     async def _reply(message: Message, response: BuyoutFlowResponse) -> None:
         kwargs = {"parse_mode": "HTML"}
@@ -76,13 +73,20 @@ def build_buyout_router(container: AppContainer) -> Router:
         await message.answer(response.text, **kwargs)
 
     @router.message(F.text.in_({"Заказ выкупа", "🛍 Заказ выкупа"}))
-    async def start_buyout(message: Message) -> None:
+    async def start_buyout(message: Message, user_session=None) -> None:
         if not message.from_user:
             return
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
+        session = await resolve_user_session(
+            handler_data(user_session),
+            container,
+            platform,
+            message.from_user.id,
+        )
+        if session is None:
+            return
         response = await container.buyout_flow.start(session)
         await _reply(message, response)
 
@@ -893,15 +897,20 @@ def build_buyout_router(container: AppContainer) -> Router:
             )
         )
 
-    @router.message(F.photo | F.video | F.animation | F.document)
-    async def handle_buyout_media(message: Message) -> None:
+    @router.message(_buyout_media_state_filter, F.photo | F.video | F.animation | F.document)
+    async def handle_buyout_media(message: Message, user_session=None) -> None:
         if not message.from_user:
-            return
+            raise SkipHandler
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
-        if session.state != DialogState.BUYOUT_WAIT_MEDIA:
+        session = await resolve_user_session(
+            handler_data(user_session),
+            container,
+            platform,
+            message.from_user.id,
+        )
+        if session is None or session.state != DialogState.BUYOUT_WAIT_MEDIA:
             raise SkipHandler
         user_key = f"tg:{message.from_user.id}"
         if not container.rate_limiter.allow_request(user_key, "<media>"):
@@ -1089,21 +1098,23 @@ def build_buyout_router(container: AppContainer) -> Router:
         except Exception:
             pass
 
-    @router.message(F.text)
-    async def buyout_text_flow(message: Message) -> None:
+    @router.message(_buyout_text_state_filter, F.text)
+    async def buyout_text_flow(message: Message, user_session=None) -> None:
         if not message.from_user or not message.text:
             raise SkipHandler
-        if message.text in DELEGATED_MENU_TEXTS:
-            raise SkipHandler
         if message.text.startswith("/"):
-            raise SkipHandler
-        session = await container.session_repo.get(platform, message.from_user.id)
-        if not session or session.state not in _BUYOUT_TEXT_STATES:
             raise SkipHandler
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
+        session = await resolve_user_session(
+            handler_data(user_session),
+            container,
+            platform,
+            message.from_user.id,
+        )
+        if session is None or session.state not in BUYOUT_TEXT_STATES:
+            raise SkipHandler
         user_key = f"tg:{message.from_user.id}"
         if not container.rate_limiter.allow_request(user_key, message.text):
             return
