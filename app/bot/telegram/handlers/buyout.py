@@ -19,7 +19,9 @@ from app.bot.telegram.keyboards.profile import (
     main_menu_keyboard,
     my_orders_message_keyboard,
 )
+from app.bot.telegram.menu_texts import DELEGATED_MENU_TEXTS
 from app.bot.telegram.my_orders_media import MY_ORDERS_LOADING_TEXT, open_my_orders_panel
+from app.bot.telegram.user_access import is_user_blocked_by_admin
 from app.core.container import AppContainer
 from app.domain.enums import DialogState, OrderStatus, Platform
 from app.domain.models import OutboundMessage
@@ -49,8 +51,15 @@ def build_buyout_router(container: AppContainer) -> Router:
     payment_store = PaymentTextStore(container.settings.database.dsn)
 
     async def _is_blocked_user(user_id: int) -> bool:
-        profile = await container.profile_repo.get_by_platform_user(Platform.TELEGRAM, user_id)
-        return bool(profile and profile.is_blocked_by_admin)
+        return await is_user_blocked_by_admin(container, user_id)
+
+    _BUYOUT_TEXT_STATES = frozenset(
+        {
+            DialogState.BUYOUT_WAIT_LINK,
+            DialogState.BUYOUT_WAIT_DETAILS,
+            DialogState.BUYOUT_ADD_MORE,
+        }
+    )
 
     async def _reply(message: Message, response: BuyoutFlowResponse) -> None:
         kwargs = {"parse_mode": "HTML"}
@@ -267,9 +276,6 @@ def build_buyout_router(container: AppContainer) -> Router:
     async def my_orders_pagination(callback: CallbackQuery) -> None:
         if not callback.data or not callback.from_user or not callback.message:
             raise SkipHandler
-        if await _is_blocked_user(callback.from_user.id):
-            await callback.answer("Доступ ограничен", show_alert=True)
-            return
         try:
             action = callback_codec.decode_public(callback.data)
         except CallbackAuthError:
@@ -291,6 +297,9 @@ def build_buyout_router(container: AppContainer) -> Router:
             )
         ):
             raise SkipHandler
+        if await _is_blocked_user(callback.from_user.id):
+            await callback.answer("Доступ ограничен", show_alert=True)
+            return
         if action.startswith("buygroup:"):
             if action.startswith("buygroup:wait:"):
                 await callback.answer("⏳ Заявка ожидает обработки цены", show_alert=True)
@@ -1080,22 +1089,21 @@ def build_buyout_router(container: AppContainer) -> Router:
         except Exception:
             pass
 
-    @router.message()
+    @router.message(F.text)
     async def buyout_text_flow(message: Message) -> None:
         if not message.from_user or not message.text:
+            raise SkipHandler
+        if message.text in DELEGATED_MENU_TEXTS:
+            raise SkipHandler
+        if message.text.startswith("/"):
+            raise SkipHandler
+        session = await container.session_repo.get(platform, message.from_user.id)
+        if not session or session.state not in _BUYOUT_TEXT_STATES:
             raise SkipHandler
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        if message.text.startswith("/"):
-            raise SkipHandler
         session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
-        if session.state not in {
-            DialogState.BUYOUT_WAIT_LINK,
-            DialogState.BUYOUT_WAIT_DETAILS,
-            DialogState.BUYOUT_ADD_MORE,
-        }:
-            raise SkipHandler
         user_key = f"tg:{message.from_user.id}"
         if not container.rate_limiter.allow_request(user_key, message.text):
             return

@@ -19,6 +19,7 @@ from app.bot.telegram.keyboards.profile import (
     track_mode_keyboard,
 )
 from app.bot.telegram.my_orders_media import MY_ORDERS_LOADING_TEXT, open_my_orders_panel
+from app.bot.telegram.user_access import is_user_blocked_by_admin
 from app.bot.texts import messages as msg
 from app.core.container import AppContainer
 from app.domain.enums import DialogState, Platform
@@ -148,8 +149,16 @@ def build_profile_router(container: AppContainer) -> Router:
             )
 
     async def _is_blocked_user(user_id: int) -> bool:
-        profile = await container.profile_repo.get_by_platform_user(Platform.TELEGRAM, user_id)
-        return bool(profile and profile.is_blocked_by_admin)
+        return await is_user_blocked_by_admin(container, user_id)
+
+    _BUYOUT_SKIP_STATES = frozenset(
+        {
+            DialogState.BUYOUT_WAIT_MEDIA,
+            DialogState.BUYOUT_WAIT_LINK,
+            DialogState.BUYOUT_WAIT_DETAILS,
+            DialogState.BUYOUT_ADD_MORE,
+        }
+    )
 
     async def _post_user_tracks_to_group(
         message: Message,
@@ -222,18 +231,18 @@ def build_profile_router(container: AppContainer) -> Router:
             profile=profile,
         )
         await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
-        if profile is not None and getattr(profile, "telegram_user_id", None):
-            schedule_refresh_dialog_topic_profile(
-                message.bot,
-                container=container,
-                tg_user_id=int(profile.telegram_user_id),
-                group_topics_store=group_topics_store,
-                topic_dialog_store=topic_dialog_store,
-                notification_settings_store=notification_settings_store,
-            )
 
         async def finalize_profile_menu() -> None:
             try:
+                if profile is not None and getattr(profile, "telegram_user_id", None):
+                    schedule_refresh_dialog_topic_profile(
+                        message.bot,
+                        container=container,
+                        tg_user_id=int(profile.telegram_user_id),
+                        group_topics_store=group_topics_store,
+                        topic_dialog_store=topic_dialog_store,
+                        notification_settings_store=notification_settings_store,
+                    )
                 existing_session = await container.session_repo.get(platform, message.from_user.id)
                 session = await container.profile_flow.ensure_session(
                     platform,
@@ -313,15 +322,15 @@ def build_profile_router(container: AppContainer) -> Router:
     async def profile_callbacks(callback: CallbackQuery) -> None:
         if not callback.from_user or not callback.data or not callback.message:
             raise SkipHandler
-        if await _is_blocked_user(callback.from_user.id):
-            await callback.answer("Доступ ограничен", show_alert=True)
-            return
         try:
             action = callback_codec.decode(callback.data, callback.from_user.id)
         except CallbackAuthError:
             raise SkipHandler
         if action not in PROFILE_CALLBACK_ACTIONS:
             raise SkipHandler
+        if await _is_blocked_user(callback.from_user.id):
+            await callback.answer("Доступ ограничен", show_alert=True)
+            return
         if action in {"profile:buyout_orders", "profile:buyout_filters"}:
             await callback.answer()
             loading = await callback.message.bot.send_message(
@@ -490,28 +499,27 @@ def build_profile_router(container: AppContainer) -> Router:
         if session.state != DialogState.IDLE:
             return
 
-    @router.message()
+    @router.message(F.text)
     async def profile_text_flow(message: Message) -> None:
         if not message.from_user or not message.text:
             raise SkipHandler
         if message.chat.type != "private":
             raise SkipHandler
+        if message.text in PROFILE_BUTTONS or message.text in CONFIRM_BUTTONS or message.text in SYNC_BUTTONS:
+            raise SkipHandler
+        if message.text.startswith("/"):
+            raise SkipHandler
+
+        session = await container.session_repo.get(platform, message.from_user.id)
+        if session and session.state in _BUYOUT_SKIP_STATES:
+            raise SkipHandler
+
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        if message.text in PROFILE_BUTTONS or message.text in CONFIRM_BUTTONS or message.text in SYNC_BUTTONS:
-            return
-        if message.text.startswith("/"):
-            return
 
-        session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
-        if session.state in {
-            DialogState.BUYOUT_WAIT_MEDIA,
-            DialogState.BUYOUT_WAIT_LINK,
-            DialogState.BUYOUT_WAIT_DETAILS,
-            DialogState.BUYOUT_ADD_MORE,
-        }:
-            raise SkipHandler
+        if session is None:
+            session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
         if session.state in {DialogState.TRACK_WAIT_INPUT, DialogState.TRACK_WAIT_CONTINUE}:
             response = await container.track_flow.handle_text(session, message.text)
             response.reply_markup = _track_reply_markup(message.from_user.id, response.state)
