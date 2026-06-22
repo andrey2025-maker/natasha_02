@@ -55,8 +55,8 @@ def build_buyout_router(container: AppContainer) -> Router:
     async def _is_blocked_user(user_id: int) -> bool:
         return await is_user_blocked_by_admin(container, user_id)
 
-    _buyout_text_state_filter = DialogStatesFilter(*BUYOUT_TEXT_STATES)
-    _buyout_media_state_filter = DialogStatesFilter(*BUYOUT_MEDIA_STATES)
+    _buyout_text_state_filter = DialogStatesFilter(*BUYOUT_TEXT_STATES, container=container)
+    _buyout_media_state_filter = DialogStatesFilter(*BUYOUT_MEDIA_STATES, container=container)
 
     async def _reply(message: Message, response: BuyoutFlowResponse) -> None:
         kwargs = {"parse_mode": "HTML"}

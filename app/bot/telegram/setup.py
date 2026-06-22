@@ -14,7 +14,6 @@ from app.bot.telegram.middleware.dialog_mirror import (
     DialogMirrorIncomingMiddleware,
 )
 from app.bot.telegram.middleware.handler_timing import HandlerTimingMiddleware
-from app.bot.telegram.middleware.user_session import UserSessionMiddleware
 from app.bot.telegram.mirror_bot import DialogMirrorBot
 from app.core.container import AppContainer
 
@@ -28,10 +27,9 @@ def build_telegram_bot_and_dispatcher(container: AppContainer) -> tuple[DialogMi
         default=TELEGRAM_BOT_DEFAULTS,
     )
     dispatcher = Dispatcher()
-    dispatcher.update.outer_middleware(HandlerTimingMiddleware())
-    dispatcher.message.outer_middleware(UserSessionMiddleware(container))
     dispatcher.message.outer_middleware(DialogMirrorIncomingMiddleware(container, mirror_scheduler))
-    dispatcher.callback_query.outer_middleware(UserSessionMiddleware(container))
+    dispatcher.message.middleware(HandlerTimingMiddleware())
+    dispatcher.callback_query.middleware(HandlerTimingMiddleware())
     dispatcher.callback_query.middleware(DialogMirrorCallbackAfterMiddleware())
     dispatcher.include_router(build_start_router(container))
     dispatcher.include_router(build_admin_router(container))

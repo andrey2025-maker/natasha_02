@@ -13,7 +13,7 @@ from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
 from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.dialog_state_groups import BUYOUT_ALL_STATES, PROFILE_AND_TRACK_INPUT_STATES
 from app.bot.telegram.filters.dialog_state import DialogStatesFilter
-from app.bot.telegram.handler_session import handler_data, resolve_user_session
+from app.bot.telegram.handler_session import fetch_user_session, handler_data, resolve_user_session
 from app.bot.telegram.keyboards.main_menu import my_orders_message_keyboard
 from app.bot.telegram.keyboards.profile import (
     platforms_keyboard,
@@ -155,8 +155,8 @@ def build_profile_router(container: AppContainer) -> Router:
     async def _is_blocked_user(user_id: int) -> bool:
         return await is_user_blocked_by_admin(container, user_id)
 
-    _profile_input_state_filter = DialogStatesFilter(*PROFILE_AND_TRACK_INPUT_STATES)
-    _not_buyout_media_filter = ~DialogStatesFilter(*BUYOUT_ALL_STATES)
+    _profile_input_state_filter = DialogStatesFilter(*PROFILE_AND_TRACK_INPUT_STATES, container=container)
+    _not_buyout_media_filter = ~DialogStatesFilter(*BUYOUT_ALL_STATES, container=container)
 
     @router.message(F.text.in_(ADMIN_MENU_TEXTS))
     async def profile_skip_admin_menu(message: Message) -> None:
@@ -245,7 +245,11 @@ def build_profile_router(container: AppContainer) -> Router:
                         topic_dialog_store=topic_dialog_store,
                         notification_settings_store=notification_settings_store,
                     )
-                existing_session = await container.session_repo.get(platform, message.from_user.id)
+                existing_session = await fetch_user_session(
+                    container,
+                    platform,
+                    message.from_user.id,
+                )
                 session = await container.profile_flow.ensure_session(
                     platform,
                     message.from_user.id,

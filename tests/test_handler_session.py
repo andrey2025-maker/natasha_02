@@ -61,6 +61,37 @@ async def test_dialog_states_filter_profile_states() -> None:
 
 
 @pytest.mark.anyio
+async def test_dialog_states_filter_lazy_loads_from_container() -> None:
+    class _Repo:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def get(self, platform: Platform, user_id: int) -> UserSession | None:
+            self.calls += 1
+            return UserSession(
+                id=1,
+                platform=platform,
+                platform_user_id=user_id,
+                state=DialogState.BUYOUT_WAIT_LINK,
+            )
+
+    class _Container:
+        session_repo = _Repo()
+
+    container = _Container()
+    filt = DialogStatesFilter(*BUYOUT_TEXT_STATES, container=container)
+    data: dict = {}
+    assert await filt(object(), **data) is False
+    assert container.session_repo.calls == 0
+
+    from types import SimpleNamespace
+
+    event = SimpleNamespace(from_user=SimpleNamespace(id=99))
+    assert await filt(event, **data) is True
+    assert container.session_repo.calls == 1
+
+
+@pytest.mark.anyio
 async def test_resolve_user_session_reuses_preloaded() -> None:
     class _Repo:
         def __init__(self) -> None:
