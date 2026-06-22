@@ -21,7 +21,7 @@ from app.bot.telegram.keyboards.profile import (
     track_continue_keyboard,
     track_mode_keyboard,
 )
-from app.bot.telegram.menu_texts import DELEGATED_MENU_TEXTS
+from app.bot.telegram.menu_texts import ADMIN_MENU_TEXTS, DELEGATED_MENU_TEXTS
 from app.bot.telegram.my_orders_media import MY_ORDERS_LOADING_TEXT, open_my_orders_panel
 from app.bot.telegram.user_access import is_user_blocked_by_admin
 from app.bot.texts import messages as msg
@@ -157,6 +157,10 @@ def build_profile_router(container: AppContainer) -> Router:
 
     _profile_input_state_filter = DialogStatesFilter(*PROFILE_AND_TRACK_INPUT_STATES)
     _not_buyout_media_filter = ~DialogStatesFilter(*BUYOUT_ALL_STATES)
+
+    @router.message(F.text.in_(ADMIN_MENU_TEXTS))
+    async def profile_skip_admin_menu(message: Message) -> None:
+        raise SkipHandler
 
     async def _post_user_tracks_to_group(
         message: Message,

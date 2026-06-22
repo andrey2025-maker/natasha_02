@@ -14,5 +14,12 @@ class DialogStatesFilter(BaseFilter):
     def __init__(self, *states: DialogState) -> None:
         self.states = frozenset(states)
 
-    async def __call__(self, user_session: UserSession | None = None, **_: Any) -> bool:
-        return user_session is not None and user_session.state in self.states
+    async def __call__(
+        self,
+        user_session: UserSession | None = None,
+        **data: Any,
+    ) -> bool:
+        session = user_session
+        if session is None:
+            session = data.get("user_session")
+        return isinstance(session, UserSession) and session.state in self.states
