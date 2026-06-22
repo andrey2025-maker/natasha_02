@@ -285,7 +285,7 @@ class BuyoutFlowService:
         text = assemble_orders_panel_text(
             header_parts,
             lines,
-            for_media_caption=bool(order_media_groups),
+            for_media_caption=False,
         )
         return BuyoutFlowResponse(
             text=text,
