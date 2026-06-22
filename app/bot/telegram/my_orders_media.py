@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from aiogram import Bot
@@ -189,58 +188,62 @@ async def open_my_orders_panel(
             parse_mode="HTML",
         )
 
-    async def work() -> None:
-        try:
-            if replace_message:
-                await clear_my_orders_media(bot, chat_id, session)
-                try:
-                    await message.delete()
-                except Exception:
-                    pass
-                state_data = dict(session.state_data)
-                state_data.pop("my_orders_panel_message_id", None)
-                session.state_data = state_data
+    try:
+        if replace_message:
+            await clear_my_orders_media(bot, chat_id, session)
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            state_data = dict(session.state_data)
+            state_data.pop("my_orders_panel_message_id", None)
+            session.state_data = state_data
 
-            await buyout_flow.prepare_preferences(session, persist=True)
-            detailed = await buyout_flow.render_orders(
+        await buyout_flow.prepare_preferences(session, persist=True)
+        detailed = await buyout_flow.render_orders(
+            session,
+            page=page,
+            include_details=True,
+            profile=profile,
+        )
+        detailed_markup = build_reply_markup(user_id, session, detailed)
+        await deliver_my_orders_panel(
+            bot,
+            chat_id,
+            session,
+            container,
+            text=detailed.text,
+            order_media_groups=detailed.order_media_groups,
+            reply_markup=detailed_markup,
+        )
+        try:
+            await loading_message.delete()
+        except Exception:
+            pass
+    except Exception:
+        logger.exception("Failed to load my orders panel for user_id=%s", user_id)
+        try:
+            fast = await buyout_flow.render_orders(
                 session,
                 page=page,
-                include_details=True,
+                include_details=False,
                 profile=profile,
             )
-            detailed_markup = build_reply_markup(user_id, session, detailed)
-            try:
-                await loading_message.delete()
-            except Exception:
-                pass
-            await deliver_my_orders_panel(
-                bot,
-                chat_id,
-                session,
-                container,
-                text=detailed.text,
-                order_media_groups=detailed.order_media_groups,
-                reply_markup=detailed_markup,
+            fallback_markup = build_reply_markup(user_id, session, fast)
+            await edit_panel_message(
+                loading_message,
+                text=fast.text,
+                reply_markup=fallback_markup,
             )
         except Exception:
-            logger.exception("Failed to load my orders panel")
             try:
-                fast = await buyout_flow.render_orders(
-                    session,
-                    page=page,
-                    include_details=False,
-                    profile=profile,
-                )
-                fallback_markup = build_reply_markup(user_id, session, fast)
                 await edit_panel_message(
                     loading_message,
-                    text=fast.text,
-                    reply_markup=fallback_markup,
+                    text="Не удалось загрузить заказы. Попробуйте ещё раз.",
                 )
             except Exception:
                 pass
 
-    asyncio.create_task(work())
     return loading_message
 
 

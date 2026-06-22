@@ -121,6 +121,13 @@ def build_buyout_router(container: AppContainer) -> Router:
             codec=callback_codec,
         )
 
+    async def _resolve_orders_session(user_id: int, profile=None):
+        return await container.profile_flow.get_or_create_session(
+            platform,
+            user_id,
+            known_profile=profile,
+        )
+
     async def _bootstrap_my_orders(
         message: Message,
         *,
@@ -131,32 +138,14 @@ def build_buyout_router(container: AppContainer) -> Router:
         if not message.from_user:
             return
         try:
-            profile, existing_session = await asyncio.gather(
-                container.profile_repo.get_by_platform_user(platform, message.from_user.id),
-                container.session_repo.get(platform, message.from_user.id),
-            )
+            profile = await container.profile_repo.get_by_platform_user(platform, message.from_user.id)
             if profile and profile.is_blocked_by_admin:
                 await edit_panel_message(
                     loading_message,
                     text="Ваш доступ ограничен администратором. Обратитесь в поддержку.",
                 )
                 return
-            if existing_session is not None:
-                session = existing_session
-                asyncio.create_task(
-                    container.profile_flow.ensure_session(
-                        platform,
-                        message.from_user.id,
-                        known_profile=profile,
-                        existing_session=existing_session,
-                    )
-                )
-            else:
-                session = await container.profile_flow.get_or_create_session(
-                    platform,
-                    message.from_user.id,
-                    known_profile=profile,
-                )
+            session = await _resolve_orders_session(message.from_user.id, profile)
             await open_my_orders_panel(
                 message,
                 session,
@@ -171,19 +160,24 @@ def build_buyout_router(container: AppContainer) -> Router:
             )
         except Exception:
             logger.exception("Failed to bootstrap my orders for user_id=%s", message.from_user.id)
+            try:
+                await edit_panel_message(
+                    loading_message,
+                    text="Не удалось загрузить заказы. Попробуйте ещё раз.",
+                )
+            except Exception:
+                pass
 
     @router.message(F.text.in_({"Мои заказы", "📦 Мои заказы"}))
     async def show_my_orders(message: Message) -> None:
         if not message.from_user:
             return
         loading = await message.answer(MY_ORDERS_LOADING_TEXT, parse_mode="HTML")
-        asyncio.create_task(
-            _bootstrap_my_orders(
-                message,
-                page=1,
-                replace_message=False,
-                loading_message=loading,
-            )
+        await _bootstrap_my_orders(
+            message,
+            page=1,
+            replace_message=False,
+            loading_message=loading,
         )
 
     @router.message(F.text.in_({"Фильтры заказов", "🎛 Фильтры заказов"}))
@@ -191,13 +185,11 @@ def build_buyout_router(container: AppContainer) -> Router:
         if not message.from_user:
             return
         loading = await message.answer(MY_ORDERS_LOADING_TEXT, parse_mode="HTML")
-        asyncio.create_task(
-            _bootstrap_my_orders(
-                message,
-                page=1,
-                replace_message=False,
-                loading_message=loading,
-            )
+        await _bootstrap_my_orders(
+            message,
+            page=1,
+            replace_message=False,
+            loading_message=loading,
         )
 
     async def _paginate_my_orders(
@@ -209,32 +201,14 @@ def build_buyout_router(container: AppContainer) -> Router:
         if not callback.from_user or not callback.message:
             return
         try:
-            profile, existing_session = await asyncio.gather(
-                container.profile_repo.get_by_platform_user(platform, callback.from_user.id),
-                container.session_repo.get(platform, callback.from_user.id),
-            )
+            profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
             if profile and profile.is_blocked_by_admin:
                 await edit_panel_message(
                     loading_message,
                     text="Ваш доступ ограничен администратором. Обратитесь в поддержку.",
                 )
                 return
-            if existing_session is not None:
-                session = existing_session
-                asyncio.create_task(
-                    container.profile_flow.ensure_session(
-                        platform,
-                        callback.from_user.id,
-                        known_profile=profile,
-                        existing_session=existing_session,
-                    )
-                )
-            else:
-                session = await container.profile_flow.get_or_create_session(
-                    platform,
-                    callback.from_user.id,
-                    known_profile=profile,
-                )
+            session = await _resolve_orders_session(callback.from_user.id, profile)
             await open_my_orders_panel(
                 callback.message,
                 session,
@@ -249,6 +223,13 @@ def build_buyout_router(container: AppContainer) -> Router:
             )
         except Exception:
             logger.exception("Failed to paginate my orders for user_id=%s", callback.from_user.id)
+            try:
+                await edit_panel_message(
+                    loading_message,
+                    text="Не удалось загрузить заказы. Попробуйте ещё раз.",
+                )
+            except Exception:
+                pass
 
     async def _apply_filter_and_open(
         callback: CallbackQuery,
@@ -883,17 +864,15 @@ def build_buyout_router(container: AppContainer) -> Router:
                 text=MY_ORDERS_LOADING_TEXT,
                 parse_mode="HTML",
             )
-            asyncio.create_task(
-                _apply_filter_and_open(
-                    callback,
-                    action=action,
-                    loading_message=loading,
-                )
+            await _apply_filter_and_open(
+                callback,
+                action=action,
+                loading_message=loading,
             )
             return
 
         if not action.startswith("my_orders:"):
-            return
+            raise SkipHandler
         try:
             page = int(action.split(":", maxsplit=1)[1])
         except ValueError:
@@ -905,12 +884,10 @@ def build_buyout_router(container: AppContainer) -> Router:
             text=MY_ORDERS_LOADING_TEXT,
             parse_mode="HTML",
         )
-        asyncio.create_task(
-            _paginate_my_orders(
-                callback,
-                page=page,
-                loading_message=loading,
-            )
+        await _paginate_my_orders(
+            callback,
+            page=page,
+            loading_message=loading,
         )
 
     @router.message(_buyout_media_state_filter, F.photo | F.video | F.animation | F.document)

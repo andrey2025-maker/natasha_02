@@ -345,36 +345,40 @@ def build_profile_router(container: AppContainer) -> Router:
                 text=MY_ORDERS_LOADING_TEXT,
                 parse_mode="HTML",
             )
-
-            async def open_orders_from_profile() -> None:
+            try:
+                profile = await container.profile_repo.get_by_platform_user(
+                    platform,
+                    callback.from_user.id,
+                )
+                session = await container.profile_flow.get_or_create_session(
+                    platform,
+                    callback.from_user.id,
+                    known_profile=profile,
+                )
+                await open_my_orders_panel(
+                    callback.message,
+                    session,
+                    container,
+                    container.buyout_flow,
+                    page=1,
+                    user_id=callback.from_user.id,
+                    build_reply_markup=_my_orders_reply_markup,
+                    replace_message=True,
+                    profile=profile,
+                    loading_message=loading,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to open my orders from profile for user_id=%s",
+                    callback.from_user.id,
+                )
                 try:
-                    session = await container.profile_flow.get_or_create_session(
-                        platform,
-                        callback.from_user.id,
-                    )
-                    profile = await container.profile_repo.get_by_platform_user(
-                        platform,
-                        callback.from_user.id,
-                    )
-                    await open_my_orders_panel(
-                        callback.message,
-                        session,
-                        container,
-                        container.buyout_flow,
-                        page=1,
-                        user_id=callback.from_user.id,
-                        build_reply_markup=_my_orders_reply_markup,
-                        replace_message=True,
-                        profile=profile,
-                        loading_message=loading,
+                    await edit_panel_message(
+                        loading,
+                        text="Не удалось загрузить заказы. Попробуйте ещё раз.",
                     )
                 except Exception:
-                    logger.exception(
-                        "Failed to open my orders from profile for user_id=%s",
-                        callback.from_user.id,
-                    )
-
-            asyncio.create_task(open_orders_from_profile())
+                    pass
             return
         session = await container.profile_flow.get_or_create_session(platform, callback.from_user.id)
         if action == "profile:start_fill":
