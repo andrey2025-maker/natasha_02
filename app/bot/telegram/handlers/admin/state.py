@@ -308,6 +308,21 @@ async def _clear_admin_input_states(container: AppContainer, session) -> None:
     await clear_admin_input_states(container, session)
 
 
+async def clear_admin_state_on_menu_nav(
+    container: AppContainer,
+    *,
+    platform,
+    user_id: int,
+) -> None:
+    """Сбрасывает зависший admin-ввод при переходе по кнопкам главного меню."""
+    if not await container.admin_service.is_admin(user_id):
+        return
+    session = await container.profile_flow.get_or_create_session(platform, user_id)
+    if not admin_session_has_pending(session):
+        return
+    await clear_admin_input_states(container, session)
+
+
 def _reset_admin_utils_waiters(state: dict) -> None:
     keys = [
         "awaiting_payment_text",

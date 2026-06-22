@@ -93,3 +93,8 @@ ADMIN_MENU_TEXTS: frozenset[str] = frozenset(
         "Готово медиа",
     }
 )
+
+# Кнопки главного меню для пользователей — admin catch-all пропускает без БД.
+USER_FACING_MENU_TEXTS: frozenset[str] = frozenset(
+    text for text in DELEGATED_MENU_TEXTS if text not in ADMIN_MENU_TEXTS
+) | BUYOUT_DIALOG_STATES_TEXTS

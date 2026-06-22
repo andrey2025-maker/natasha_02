@@ -42,6 +42,7 @@ from app.bot.telegram.handlers.faq_admin import (
     reset_faq_admin_state,
     try_handle_faq_admin_text,
 )
+from app.bot.telegram.menu_texts import USER_FACING_MENU_TEXTS
 from app.bot.telegram.handlers.questions_topic import ensure_dialog_topic_for_telegram_user
 from app.bot.telegram.keyboards.profile import main_menu_keyboard
 from app.core.container import AppContainer
@@ -76,19 +77,19 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
     async def _ensure_admin(message: Message) -> bool:
         return await ctx.ensure_admin(message)
 
-    @router.message()
+    @router.message(F.text)
     async def admin_order_edit_input(message: Message) -> None:
+        if not message.from_user or not message.text:
+            raise SkipHandler
+        text = message.text.strip()
+        if text in USER_FACING_MENU_TEXTS:
+            raise SkipHandler
         if not await _ensure_admin(message):
-            raise SkipHandler
-        if not message.from_user:
-            raise SkipHandler
-        if not message.text:
             raise SkipHandler
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
         broadcast_state = _get_admin_broadcast_state(session)
         utils_state = _get_admin_utils_state(session)
         orders_state = _get_admin_orders_state(session)
-        text = message.text.strip()
 
         has_utils = admin_utils_has_waiter(utils_state)
         has_broadcast = bool(broadcast_state.get("awaiting_payload"))
@@ -116,11 +117,9 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
 
         if is_navigation_command(text) and (has_utils or has_broadcast or has_orders_edit or has_tracks_input):
             await _clear_admin_input_states(container, session)
-            if text in {"Профиль", "👤 Профиль"}:
-                await _open_user_profile_from_admin(message, container, callback_codec)
-                return
-            await message.answer("Предыдущий ввод отменён. Повторите нажатие кнопки.")
-            return
+            if has_dialog_fsm:
+                await container.profile_flow.cancel_to_idle(session)
+            raise SkipHandler
 
         if not has_utils and not has_broadcast and not has_tracks_input:
             has_orders_input = bool(
@@ -594,6 +593,11 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
         bulk_field = state.get("bulk_field")
 
         if state.get("awaiting_order_search_query"):
+            if is_navigation_command(text):
+                await _clear_admin_input_states(container, session)
+                if session.state != DialogState.IDLE:
+                    await container.profile_flow.cancel_to_idle(session)
+                raise SkipHandler
             mode = str(state.get("order_search_mode") or "").strip().lower()
             query = (message.text or "").strip()
             if not query:

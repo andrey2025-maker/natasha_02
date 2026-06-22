@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from html import escape
 
 from aiogram import F, Router
@@ -10,6 +12,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
 from app.bot.telegram.callback_panel import edit_content_with_media, edit_panel_message, message_has_media
 from app.bot.telegram.bot_api import api_copy_message, api_send_message
+from app.bot.telegram.handlers.admin import clear_admin_state_on_menu_nav
 from app.bot.telegram.mirror_bot import skip_dialog_mirror
 from app.core.container import AppContainer
 from app.domain.enums import Platform
@@ -22,6 +25,8 @@ from app.services.admin_tools_service import (
     send_content_with_media_to_telegram,
 )
 from app.bot.telegram.handlers.questions_topic import handle_questions_process_callback
+
+logger = logging.getLogger(__name__)
 
 
 def build_questions_router(container: AppContainer) -> Router:
@@ -46,6 +51,25 @@ def build_questions_router(container: AppContainer) -> Router:
         profile = await container.profile_repo.get_by_platform_user(Platform.TELEGRAM, user_id)
         return bool(profile and profile.is_blocked_by_admin)
 
+    def _schedule_clear_admin_menu_state(message: Message) -> None:
+        if not message.from_user:
+            return
+
+        async def _clear() -> None:
+            try:
+                await clear_admin_state_on_menu_nav(
+                    container,
+                    platform=Platform.TELEGRAM,
+                    user_id=message.from_user.id,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to clear admin menu state for user_id=%s",
+                    message.from_user.id,
+                )
+
+        asyncio.create_task(_clear())
+
     @router.message(F.chat.type == "private", F.text.in_({"Запрещенные товары", "🚫 Запрещенные товары"}))
     async def prohibited_goods(message: Message) -> None:
         if not message.from_user:
@@ -54,6 +78,7 @@ def build_questions_router(container: AppContainer) -> Router:
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
         await _send_static_content(message, prohibited_store)
+        _schedule_clear_admin_menu_state(message)
 
     @router.message(F.chat.type == "private", F.text.in_({"Как работает доставка", "🚚 Как работает доставка"}))
     async def delivery_info(message: Message) -> None:
@@ -63,6 +88,7 @@ def build_questions_router(container: AppContainer) -> Router:
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
         await _send_static_content(message, delivery_store)
+        _schedule_clear_admin_menu_state(message)
 
     @router.message(F.chat.type == "private", F.text.in_({"Наши контакты", "☎️ Наши контакты"}))
     async def contacts_info(message: Message) -> None:
@@ -72,6 +98,7 @@ def build_questions_router(container: AppContainer) -> Router:
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
         await _send_static_content(message, contacts_store)
+        _schedule_clear_admin_menu_state(message)
 
     @router.message(F.chat.type == "private", F.text.in_({"Вопросы", "❓ Вопросы"}))
     async def faq_root(message: Message) -> None:
@@ -89,6 +116,7 @@ def build_questions_router(container: AppContainer) -> Router:
             section_id=None,
             edit=False,
         )
+        _schedule_clear_admin_menu_state(message)
 
     @router.message(F.chat.type.in_({"group", "supergroup"}), F.reply_to_message, F.text)
     async def manager_text_reply_in_topic(message: Message) -> None:
