@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import logging
-
 from aiogram.types import Message
 
 from app.bot.telegram.callback_panel import edit_panel_message
@@ -12,8 +9,6 @@ from app.services.admin_tools_service import (
     clip_html_caption,
     send_stored_media_group_to_telegram,
 )
-
-logger = logging.getLogger(__name__)
 
 
 async def _delete_message_ids(bot, chat_id: int, raw_ids: object) -> None:
@@ -41,28 +36,6 @@ def flatten_order_media_groups(groups: list[tuple[str, list[dict]]]) -> list[dic
             seen.add(key)
             result.append(item)
     return result
-
-
-async def _ensure_reply_markup(bot, chat_id: int, message_id: int, reply_markup) -> None:
-    if not reply_markup:
-        return
-    for attempt in range(3):
-        try:
-            await bot.edit_message_reply_markup(
-                chat_id=chat_id,
-                message_id=message_id,
-                reply_markup=reply_markup,
-            )
-            return
-        except Exception:
-            if attempt < 2:
-                await asyncio.sleep(0.15 * (attempt + 1))
-            else:
-                logger.exception(
-                    "Failed to attach my orders reply_markup (chat_id=%s message_id=%s)",
-                    chat_id,
-                    message_id,
-                )
 
 
 async def _deliver_orders_panel(
@@ -97,7 +70,6 @@ async def _deliver_orders_panel(
     if not all_ids:
         await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
         return []
-    await _ensure_reply_markup(bot, chat_id, all_ids[0], reply_markup)
     return all_ids[1:]
 
 
