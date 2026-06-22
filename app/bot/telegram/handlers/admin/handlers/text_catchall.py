@@ -42,7 +42,7 @@ from app.bot.telegram.handlers.faq_admin import (
     reset_faq_admin_state,
     try_handle_faq_admin_text,
 )
-from app.bot.telegram.menu_texts import USER_FACING_MENU_TEXTS
+from app.bot.telegram.menu_texts import MENU_TEXTS_SKIP_IDLE_FORWARD
 from app.bot.telegram.handlers.questions_topic import ensure_dialog_topic_for_telegram_user
 from app.bot.telegram.keyboards.profile import main_menu_keyboard
 from app.core.container import AppContainer
@@ -82,7 +82,7 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
         if not message.from_user or not message.text:
             raise SkipHandler
         text = message.text.strip()
-        if text in USER_FACING_MENU_TEXTS:
+        if text in MENU_TEXTS_SKIP_IDLE_FORWARD:
             raise SkipHandler
         if not await _ensure_admin(message):
             raise SkipHandler

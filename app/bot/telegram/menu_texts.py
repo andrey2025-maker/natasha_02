@@ -47,9 +47,6 @@ DELEGATED_MENU_TEXTS: frozenset[str] = frozenset(
 
 BUYOUT_DIALOG_STATES_TEXTS: frozenset[str] = frozenset({"Ещё товар", "Нет"})
 
-# Тексты кнопок, которые не пересылаются в тему «вопросы» для idle-пользователя.
-MENU_TEXTS_SKIP_IDLE_FORWARD: frozenset[str] = DELEGATED_MENU_TEXTS | BUYOUT_DIALOG_STATES_TEXTS
-
 # Кнопки админ-панели — profile-роутер пропускает их без обработки.
 ADMIN_MENU_TEXTS: frozenset[str] = frozenset(
     {
@@ -92,6 +89,11 @@ ADMIN_MENU_TEXTS: frozenset[str] = frozenset(
         "Очистить медиа доставка",
         "Готово медиа",
     }
+)
+
+# Тексты кнопок, которые не пересылаются в тему «вопросы» для idle-пользователя.
+MENU_TEXTS_SKIP_IDLE_FORWARD: frozenset[str] = (
+    DELEGATED_MENU_TEXTS | BUYOUT_DIALOG_STATES_TEXTS | ADMIN_MENU_TEXTS
 )
 
 # Кнопки главного меню для пользователей — admin catch-all пропускает без БД.

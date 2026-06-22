@@ -229,6 +229,10 @@ class PostgresSessionRepository:
                     session.user_profile_id,
                     datetime.utcnow(),
                 )
+        if session.platform == Platform.TELEGRAM:
+            from app.bot.telegram.handler_session import drop_user_session_cache
+
+            drop_user_session_cache(int(session.platform_user_id))
         return _row_to_session(row)
 
 

@@ -14,17 +14,38 @@ from app.bot.telegram.handlers.admin.handlers.utils_messages import register_uti
 from app.core.container import AppContainer
 
 
-def build_admin_router(container: AppContainer) -> Router:
+def _admin_ctx(container: AppContainer) -> AdminContext:
+    return AdminContext.from_container(container)
+
+
+def build_admin_handlers_router(container: AppContainer) -> Router:
+    """Кнопки и callback админки — без catch-all, можно ставить до user-роутеров."""
     router = Router()
-    ctx = AdminContext.from_container(container)
+    ctx = _admin_ctx(container)
 
     register_menu_messages(router, ctx)
     register_utils_messages(router, ctx)
     register_orders_messages(router, ctx)
-    register_media_messages(router, ctx)
-    register_text_catchall(router, ctx)
     register_blocks_messages(router, ctx)
     register_admins_messages(router, ctx)
     register_callbacks(router, ctx)
 
+    return router
+
+
+def build_admin_input_router(container: AppContainer) -> Router:
+    """Текст/медиа в режиме ввода админки — только в конце цепочки роутеров."""
+    router = Router()
+    ctx = _admin_ctx(container)
+
+    register_text_catchall(router, ctx)
+    register_media_messages(router, ctx)
+
+    return router
+
+
+def build_admin_router(container: AppContainer) -> Router:
+    router = Router()
+    router.include_router(build_admin_handlers_router(container))
+    router.include_router(build_admin_input_router(container))
     return router

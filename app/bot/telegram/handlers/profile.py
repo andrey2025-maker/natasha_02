@@ -157,6 +157,8 @@ def build_profile_router(container: AppContainer) -> Router:
 
     _profile_input_state_filter = DialogStatesFilter(*PROFILE_AND_TRACK_INPUT_STATES, container=container)
     _not_buyout_media_filter = ~DialogStatesFilter(*BUYOUT_ALL_STATES, container=container)
+    _idle_media_filter = DialogStatesFilter(DialogState.IDLE, container=container)
+    _profile_fsm_media_filter = DialogStatesFilter(*PROFILE_AND_TRACK_INPUT_STATES, container=container)
 
     @router.message(F.text.in_(ADMIN_MENU_TEXTS))
     async def profile_skip_admin_menu(message: Message) -> None:
@@ -261,7 +263,7 @@ def build_profile_router(container: AppContainer) -> Router:
 
         asyncio.create_task(finalize_profile_menu())
 
-    @router.message(F.text == "Заполнить профиль")
+    @router.message(F.text.in_({"Заполнить профиль", "📝 Заполнить профиль"}))
     async def start_fill(message: Message) -> None:
         if not message.from_user:
             return
@@ -288,7 +290,7 @@ def build_profile_router(container: AppContainer) -> Router:
             return
         session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
         if session.state != DialogState.PROFILE_CONFIRM:
-            return
+            raise SkipHandler
 
         action_map = {
             "Да": "confirm_yes",
@@ -466,7 +468,7 @@ def build_profile_router(container: AppContainer) -> Router:
             response.reply_markup = platforms_keyboard(callback.from_user.id, callback_codec)
         await _apply_response(callback.message, response, edit=True)
 
-    @router.message(_not_buyout_media_filter, F.photo | F.video | F.animation | F.document)
+    @router.message(_idle_media_filter, _not_buyout_media_filter, F.photo | F.video | F.animation | F.document)
     async def profile_idle_media_flow(message: Message) -> None:
         if not message.from_user:
             raise SkipHandler
@@ -478,6 +480,15 @@ def build_profile_router(container: AppContainer) -> Router:
             return
 
         raise SkipHandler
+
+    @router.message(_profile_fsm_media_filter, F.photo | F.video | F.animation | F.document)
+    async def profile_fsm_media_reject(message: Message) -> None:
+        if not message.from_user or message.chat.type != "private":
+            raise SkipHandler
+        if await _is_blocked_user(message.from_user.id):
+            await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
+            return
+        await message.answer("Сейчас ожидается текст. Для отмены отправьте /отмена")
 
     @router.message(_profile_input_state_filter, F.text)
     async def profile_text_flow(message: Message, user_session=None) -> None:

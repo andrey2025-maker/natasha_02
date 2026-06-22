@@ -77,7 +77,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Бэкапы")
     async def admin_backups(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         enabled = await backup_service.auto_backup_enabled()
         target_chat_id, target_topic_id = await backup_service.get_backup_target()
         target_hint = "по умолчанию из .env"
@@ -93,7 +93,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Группа")
     async def admin_group(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         if not message.from_user:
             return
         target_chat_id, target_topic_id = await group_topics_store.get_tg_topic("logs")
@@ -116,7 +116,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Уведомления")
     async def admin_group_notifications(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         if not message.from_user:
             return
         settings = await notification_settings_store.get_settings()
@@ -128,7 +128,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Задать группу")
     async def admin_group_set(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         if not message.from_user:
             return
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
@@ -145,7 +145,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Создать темы")
     async def admin_group_create_topics(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         chat_id, _ = await group_topics_store.get_tg_topic("logs")
         if not chat_id:
             await message.answer("Сначала задайте группу через «Задать группу».")
@@ -185,7 +185,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Создать VK логи")
     async def admin_group_create_vk_logs(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         if container.settings.vk is None:
             await message.answer("VK не настроен.")
             return
@@ -201,7 +201,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Сбросить группу")
     async def admin_group_reset(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         await backup_service.clear_backup_target()
         await group_topics_store.clear_tg()
         await message.answer("Группа и темы сброшены.")
@@ -209,7 +209,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Оплаты группа")
     async def admin_payment_group(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         if not message.from_user:
             return
         target_chat_id, target_topic_id = await payment_target_store.get_target()
@@ -226,7 +226,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Задать оплаты группу")
     async def admin_payment_group_set(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         if not message.from_user:
             return
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
@@ -243,14 +243,14 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Сбросить оплаты группу")
     async def admin_payment_group_reset(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         await payment_target_store.clear_target()
         await message.answer("Цель заявок на проверку оплаты сброшена.")
 
     @router.message(F.text == "Коды")
     async def admin_codes(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         if not message.from_user:
             return
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
@@ -271,7 +271,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Коды добавить")
     async def admin_codes_add_start(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         if not message.from_user:
             return
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
@@ -288,7 +288,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Коды удалить")
     async def admin_codes_remove_start(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         if not message.from_user:
             return
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
@@ -305,7 +305,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Оплата")
     async def admin_payment(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         text = await payment_store.get_text()
         media_items = await payment_store.get_media_items()
         media_line = f"Медиа: {len(media_items)}"
@@ -323,7 +323,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Ред. оплата текст")
     async def admin_payment_edit_text(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         if not message.from_user:
             return
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
@@ -340,7 +340,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Ред. оплата медиа")
     async def admin_payment_edit_media(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         if not message.from_user:
             return
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
@@ -360,14 +360,14 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Очистить медиа оплаты")
     async def admin_payment_clear_media(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         await payment_store.clear_media()
         await message.answer("Медиа-инструкция оплаты очищена.")
 
     @router.message(F.text == "Контент")
     async def admin_content(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         await message.answer(
             "🧩 Управление контентом.\n"
             "Раздел: «Доставка контент».\n"
@@ -377,7 +377,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Доставка контент")
     async def admin_delivery_content(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         text = await delivery_store.get_text()
         media_items = await delivery_store.get_media_items()
         await message.answer(
@@ -394,7 +394,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Ред. доставка текст")
     async def admin_delivery_edit_text(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         if not message.from_user:
             return
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
@@ -407,7 +407,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Ред. доставка медиа")
     async def admin_delivery_edit_media(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         if not message.from_user:
             return
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
@@ -423,14 +423,14 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Очистить медиа доставка")
     async def admin_delivery_clear_media(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         await delivery_store.clear_media()
         await message.answer("Медиа для доставки очищено.")
 
     @router.message(F.text == "Готово медиа")
     async def admin_media_done(message: Message) -> None:
         if not await _ensure_admin(message):
-            return
+            raise SkipHandler
         if not message.from_user:
             return
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)

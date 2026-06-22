@@ -107,6 +107,8 @@ def build_questions_router(container: AppContainer) -> Router:
     async def faq_root(message: Message) -> None:
         if not message.from_user:
             return
+        if await container.admin_service.is_admin(message.from_user.id):
+            raise SkipHandler
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
