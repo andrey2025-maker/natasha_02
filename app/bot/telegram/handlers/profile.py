@@ -334,8 +334,10 @@ def build_profile_router(container: AppContainer) -> Router:
         if await _is_blocked_user(callback.from_user.id):
             await callback.answer("Доступ ограничен", show_alert=True)
             return
+
+        await callback.answer()
+
         if action in {"profile:buyout_orders", "profile:buyout_filters"}:
-            await callback.answer()
             loading = await callback.message.bot.send_message(
                 chat_id=callback.message.chat.id,
                 text=MY_ORDERS_LOADING_TEXT,
@@ -383,11 +385,9 @@ def build_profile_router(container: AppContainer) -> Router:
                     callback_codec,
                     profile=profile,
                 )
-                await callback.answer("Профиль уже заполнен.")
                 await _apply_response(callback.message, response, edit=True)
                 return
             response = await container.profile_flow.start_fill(session)
-            await callback.answer()
             await _apply_response(callback.message, response, edit=True)
             return
         if action == "profile:start_sync":
@@ -400,59 +400,53 @@ def build_profile_router(container: AppContainer) -> Router:
                     callback_codec,
                     profile=profile,
                 )
-                await callback.answer("Профиль уже заполнен.")
                 await _apply_response(callback.message, response, edit=True)
                 return
             response = await container.profile_flow.start_sync_with_other_platform(session)
-            await callback.answer()
             await _apply_response(callback.message, response, edit=True)
             return
         if action == "profile:buyout_start":
             response = await container.buyout_flow.start(session)
-            await callback.answer()
             await _apply_response(callback.message, response, edit=True)
             return
         if action == "profile:track:open":
             profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
             if not profile or not profile.is_filled:
-                await callback.answer("Сначала заполните профиль.", show_alert=True)
+                await callback.message.answer("Сначала заполните профиль.")
                 return
             response = await container.track_flow.show_mode_menu(session)
             response.reply_markup = track_mode_keyboard(callback.from_user.id, callback_codec)
-            await callback.answer()
             await _apply_response(callback.message, response, edit=True)
             return
         if action in {"profile:track:mode:numbers", "profile:track:mode:comments"}:
             profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
             if not profile or not profile.is_filled:
-                await callback.answer("Сначала заполните профиль.", show_alert=True)
+                await callback.message.answer("Сначала заполните профиль.")
                 return
             mode = "numbers" if action.endswith(":numbers") else "comments"
             response = await container.track_flow.start_mode(session, mode)
-            await callback.answer()
             await _apply_response(callback.message, response, edit=True)
             return
         if action == "profile:track:more":
             response = await container.track_flow.continue_input(session)
-            await callback.answer()
             await _apply_response(callback.message, response, edit=True)
             return
         if action == "profile:track:done":
             profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
             if not profile or not profile.is_filled:
-                await callback.answer("Сначала заполните профиль.", show_alert=True)
+                await callback.message.answer("Сначала заполните профиль.")
                 return
             pending = list(session.state_data.get("track_pending") or [])
             if not pending:
-                await callback.answer("Нет трек-номеров для отправки.", show_alert=True)
+                await callback.message.answer("Нет трек-номеров для отправки.")
                 return
             try:
                 created = await container.track_flow.create_orders_from_tracks(profile, pending)
             except Exception:
-                await callback.answer("Не удалось сохранить заказы.", show_alert=True)
+                await callback.message.answer("Не удалось сохранить заказы.")
                 return
             if not created:
-                await callback.answer("Не распознаны трек-номера для сохранения.", show_alert=True)
+                await callback.message.answer("Не распознаны трек-номера для сохранения.")
                 return
             ok, note = await _post_user_tracks_to_group(
                 callback.message,
@@ -460,7 +454,6 @@ def build_profile_router(container: AppContainer) -> Router:
                 orders=created,
             )
             await container.track_flow.clear(session)
-            await callback.answer()
             if ok:
                 await callback.message.answer(f"{note} Заказы добавлены в «Мои заказы».")
             else:
@@ -471,7 +464,6 @@ def build_profile_router(container: AppContainer) -> Router:
         response = await container.profile_flow.handle_callback(session, action, callback_codec)
         if action in {"passport_yes", "passport_no"}:
             response.reply_markup = platforms_keyboard(callback.from_user.id, callback_codec)
-        await callback.answer()
         await _apply_response(callback.message, response, edit=True)
 
     @router.message(_not_buyout_media_filter, F.photo | F.video | F.animation | F.document)

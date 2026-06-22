@@ -220,6 +220,8 @@ def build_questions_router(container: AppContainer) -> Router:
         if not action.startswith("faq:"):
             raise SkipHandler
 
+        await callback.answer()
+
         raw_section = action.split(":", maxsplit=1)[1]
         if raw_section == "root":
             section_id = None
@@ -227,10 +229,9 @@ def build_questions_router(container: AppContainer) -> Router:
             try:
                 section_id = int(raw_section)
             except ValueError:
-                await callback.answer("Неверный раздел", show_alert=True)
+                await callback.message.answer("Неверный раздел.")
                 return
 
-        await callback.answer()
         await _send_section(
             message=callback.message,
             user_id=callback.from_user.id,
@@ -265,6 +266,13 @@ async def _finalize_faq_root(
         )
     except Exception:
         logger.exception("Failed to load FAQ root for user_id=%s", user_id)
+        try:
+            await edit_panel_message(
+                panel,
+                text="❓ <b>Вопросы</b>\n\nНе удалось загрузить раздел. Попробуйте ещё раз.",
+            )
+        except Exception:
+            pass
 
 
 async def _finalize_static_content(

@@ -32,8 +32,8 @@ def build_telegram_bot_and_dispatcher(container: AppContainer) -> tuple[DialogMi
     dispatcher.callback_query.middleware(HandlerTimingMiddleware())
     dispatcher.callback_query.middleware(DialogMirrorCallbackAfterMiddleware())
     dispatcher.include_router(build_start_router(container))
+    dispatcher.include_router(build_admin_router(container))
     dispatcher.include_router(build_questions_router(container))
     dispatcher.include_router(build_profile_router(container))
     dispatcher.include_router(build_buyout_router(container))
-    dispatcher.include_router(build_admin_router(container))
     return bot, dispatcher

@@ -134,6 +134,27 @@ def register_menu_messages(router: Router, ctx: AdminContext) -> None:
             return
         await message.answer("Главное меню", reply_markup=main_menu_keyboard(include_admin=True))
 
+    @router.message(F.text == "Вопросы")
+    async def admin_faq_menu(message: Message) -> None:
+        if not await _ensure_admin(message):
+            raise SkipHandler
+        if not message.from_user:
+            return
+        session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
+        utils_state = _get_admin_utils_state(session)
+        _reset_admin_utils_waiters(utils_state)
+        await _save_admin_utils_state(container, session, utils_state)
+        await open_faq_admin_panel(
+            message,
+            container=container,
+            codec=callback_codec,
+            user_id=message.from_user.id,
+            utils_state=utils_state,
+            faq_media_store=faq_media_store,
+            edit=False,
+        )
+        await _save_admin_utils_state(container, session, utils_state)
+
     @router.message(F.text == "Профили")
     async def admin_profiles(message: Message) -> None:
         if not await _ensure_admin(message):
