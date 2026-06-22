@@ -18,7 +18,7 @@ from app.bot.telegram.keyboards.profile import (
     track_continue_keyboard,
     track_mode_keyboard,
 )
-from app.bot.telegram.my_orders_media import open_my_orders_panel
+from app.bot.telegram.my_orders_media import MY_ORDERS_LOADING_TEXT, open_my_orders_panel
 from app.bot.texts import messages as msg
 from app.core.container import AppContainer
 from app.domain.enums import DialogState, Platform
@@ -192,7 +192,7 @@ def build_profile_router(container: AppContainer) -> Router:
             return track_continue_keyboard(user_id, callback_codec)
         return None
 
-    async def _my_orders_reply_markup(user_id: int, session, response) -> InlineKeyboardMarkup:
+    def _my_orders_reply_markup(user_id: int, session, response) -> InlineKeyboardMarkup:
         state_data = response.state_data if isinstance(getattr(response, "state_data", None), dict) else {}
         filters = container.buyout_flow.filter_states(session)
         return my_orders_message_keyboard(
@@ -207,11 +207,7 @@ def build_profile_router(container: AppContainer) -> Router:
     async def profile_menu(message: Message) -> None:
         if not message.from_user:
             return
-        profile, existing_session, is_admin = await asyncio.gather(
-            container.profile_repo.get_by_platform_user(platform, message.from_user.id),
-            container.session_repo.get(platform, message.from_user.id),
-            container.admin_service.is_admin(message.from_user.id),
-        )
+        profile = await container.profile_repo.get_by_platform_user(platform, message.from_user.id)
         if profile and profile.is_blocked_by_admin:
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
@@ -238,6 +234,7 @@ def build_profile_router(container: AppContainer) -> Router:
 
         async def finalize_profile_menu() -> None:
             try:
+                existing_session = await container.session_repo.get(platform, message.from_user.id)
                 session = await container.profile_flow.ensure_session(
                     platform,
                     message.from_user.id,
@@ -245,7 +242,7 @@ def build_profile_router(container: AppContainer) -> Router:
                     existing_session=existing_session,
                 )
                 await container.profile_flow.persist_idle_menu_state(session)
-                if is_admin:
+                if await container.admin_service.is_admin(message.from_user.id):
                     await clear_admin_input_states(container, session)
             except Exception:
                 logger.exception("Failed to finalize profile menu for user_id=%s", message.from_user.id)
@@ -325,6 +322,44 @@ def build_profile_router(container: AppContainer) -> Router:
             raise SkipHandler
         if action not in PROFILE_CALLBACK_ACTIONS:
             raise SkipHandler
+        if action in {"profile:buyout_orders", "profile:buyout_filters"}:
+            await callback.answer()
+            loading = await callback.message.bot.send_message(
+                chat_id=callback.message.chat.id,
+                text=MY_ORDERS_LOADING_TEXT,
+                parse_mode="HTML",
+            )
+
+            async def open_orders_from_profile() -> None:
+                try:
+                    session = await container.profile_flow.get_or_create_session(
+                        platform,
+                        callback.from_user.id,
+                    )
+                    profile = await container.profile_repo.get_by_platform_user(
+                        platform,
+                        callback.from_user.id,
+                    )
+                    await open_my_orders_panel(
+                        callback.message,
+                        session,
+                        container,
+                        container.buyout_flow,
+                        page=1,
+                        user_id=callback.from_user.id,
+                        build_reply_markup=_my_orders_reply_markup,
+                        replace_message=True,
+                        profile=profile,
+                        loading_message=loading,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to open my orders from profile for user_id=%s",
+                        callback.from_user.id,
+                    )
+
+            asyncio.create_task(open_orders_from_profile())
+            return
         session = await container.profile_flow.get_or_create_session(platform, callback.from_user.id)
         if action == "profile:start_fill":
             profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
@@ -364,36 +399,6 @@ def build_profile_router(container: AppContainer) -> Router:
             response = await container.buyout_flow.start(session)
             await callback.answer()
             await _apply_response(callback.message, response, edit=True)
-            return
-        if action == "profile:buyout_orders":
-            profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
-            await callback.answer()
-            await open_my_orders_panel(
-                callback.message,
-                session,
-                container,
-                container.buyout_flow,
-                page=1,
-                user_id=callback.from_user.id,
-                build_reply_markup=_my_orders_reply_markup,
-                replace_message=True,
-                profile=profile,
-            )
-            return
-        if action == "profile:buyout_filters":
-            profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
-            await callback.answer()
-            await open_my_orders_panel(
-                callback.message,
-                session,
-                container,
-                container.buyout_flow,
-                page=1,
-                user_id=callback.from_user.id,
-                build_reply_markup=_my_orders_reply_markup,
-                replace_message=True,
-                profile=profile,
-            )
             return
         if action == "profile:track:open":
             profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)

@@ -177,47 +177,38 @@ async def open_my_orders_panel(
     build_reply_markup,
     replace_message: bool = False,
     profile=None,
-) -> None:
+    loading_message: Message | None = None,
+) -> Message:
     bot = message.bot
     chat_id = int(message.chat.id)
 
-    await buyout_flow.prepare_preferences(session, persist=True)
+    if loading_message is None:
+        loading_message = await bot.send_message(
+            chat_id=chat_id,
+            text=MY_ORDERS_LOADING_TEXT,
+            parse_mode="HTML",
+        )
 
-    if replace_message:
-        await clear_my_orders_media(bot, chat_id, session)
+    async def work() -> None:
         try:
-            await message.delete()
-        except Exception:
-            pass
-        state_data = dict(session.state_data)
-        state_data.pop("my_orders_panel_message_id", None)
-        session.state_data = state_data
+            if replace_message:
+                await clear_my_orders_media(bot, chat_id, session)
+                try:
+                    await message.delete()
+                except Exception:
+                    pass
+                state_data = dict(session.state_data)
+                state_data.pop("my_orders_panel_message_id", None)
+                session.state_data = state_data
 
-    fast = await buyout_flow.render_orders(
-        session,
-        page=page,
-        include_details=False,
-        profile=profile,
-    )
-    markup = await build_reply_markup(user_id, session, fast)
-
-    loading_message = await bot.send_message(
-        chat_id=chat_id,
-        text=MY_ORDERS_LOADING_TEXT,
-        parse_mode="HTML",
-    )
-
-    safe_page = int(fast.state_data.get("page", page)) if isinstance(fast.state_data, dict) else page
-
-    async def finalize() -> None:
-        try:
+            await buyout_flow.prepare_preferences(session, persist=True)
             detailed = await buyout_flow.render_orders(
                 session,
-                page=safe_page,
+                page=page,
                 include_details=True,
                 profile=profile,
             )
-            detailed_markup = await build_reply_markup(user_id, session, detailed)
+            detailed_markup = build_reply_markup(user_id, session, detailed)
             try:
                 await loading_message.delete()
             except Exception:
@@ -232,17 +223,25 @@ async def open_my_orders_panel(
                 reply_markup=detailed_markup,
             )
         except Exception:
-            logger.exception("Failed to finalize my orders panel")
+            logger.exception("Failed to load my orders panel")
             try:
+                fast = await buyout_flow.render_orders(
+                    session,
+                    page=page,
+                    include_details=False,
+                    profile=profile,
+                )
+                fallback_markup = build_reply_markup(user_id, session, fast)
                 await edit_panel_message(
                     loading_message,
                     text=fast.text,
-                    reply_markup=markup,
+                    reply_markup=fallback_markup,
                 )
             except Exception:
                 pass
 
-    asyncio.create_task(finalize())
+    asyncio.create_task(work())
+    return loading_message
 
 
 async def present_my_orders_panel(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from html import escape
 import re
 from datetime import datetime
@@ -18,7 +19,7 @@ from app.bot.telegram.keyboards.profile import (
     main_menu_keyboard,
     my_orders_message_keyboard,
 )
-from app.bot.telegram.my_orders_media import open_my_orders_panel
+from app.bot.telegram.my_orders_media import MY_ORDERS_LOADING_TEXT, open_my_orders_panel
 from app.core.container import AppContainer
 from app.domain.enums import DialogState, OrderStatus, Platform
 from app.domain.models import OutboundMessage
@@ -32,6 +33,8 @@ from app.services.admin_tools_service import (
     send_stored_media_to_telegram,
 )
 from app.services.flows.buyout_flow import BuyoutFlowResponse
+
+logger = logging.getLogger(__name__)
 
 
 def build_buyout_router(container: AppContainer) -> Router:
@@ -74,7 +77,7 @@ def build_buyout_router(container: AppContainer) -> Router:
         response = await container.buyout_flow.start(session)
         await _reply(message, response)
 
-    async def _orders_reply_markup(
+    def _orders_reply_markup(
         user_id: int,
         session,
         response: BuyoutFlowResponse,
@@ -89,85 +92,176 @@ def build_buyout_router(container: AppContainer) -> Router:
             codec=callback_codec,
         )
 
-    async def _open_my_orders(
+    async def _bootstrap_my_orders(
         message: Message,
-        session,
         *,
-        page: int = 1,
-        replace_message: bool = False,
-        profile=None,
+        page: int,
+        replace_message: bool,
+        loading_message: Message,
     ) -> None:
         if not message.from_user:
             return
-        await open_my_orders_panel(
-            message,
-            session,
-            container,
-            container.buyout_flow,
-            page=page,
-            user_id=message.from_user.id,
-            build_reply_markup=_orders_reply_markup,
-            replace_message=replace_message,
-            profile=profile,
-        )
+        try:
+            profile, existing_session = await asyncio.gather(
+                container.profile_repo.get_by_platform_user(platform, message.from_user.id),
+                container.session_repo.get(platform, message.from_user.id),
+            )
+            if profile and profile.is_blocked_by_admin:
+                await edit_panel_message(
+                    loading_message,
+                    text="Ваш доступ ограничен администратором. Обратитесь в поддержку.",
+                )
+                return
+            if existing_session is not None:
+                session = existing_session
+                asyncio.create_task(
+                    container.profile_flow.ensure_session(
+                        platform,
+                        message.from_user.id,
+                        known_profile=profile,
+                        existing_session=existing_session,
+                    )
+                )
+            else:
+                session = await container.profile_flow.get_or_create_session(
+                    platform,
+                    message.from_user.id,
+                    known_profile=profile,
+                )
+            await open_my_orders_panel(
+                message,
+                session,
+                container,
+                container.buyout_flow,
+                page=page,
+                user_id=message.from_user.id,
+                build_reply_markup=_orders_reply_markup,
+                replace_message=replace_message,
+                profile=profile,
+                loading_message=loading_message,
+            )
+        except Exception:
+            logger.exception("Failed to bootstrap my orders for user_id=%s", message.from_user.id)
 
     @router.message(F.text.in_({"Мои заказы", "📦 Мои заказы"}))
     async def show_my_orders(message: Message) -> None:
         if not message.from_user:
             return
-        profile, existing_session = await asyncio.gather(
-            container.profile_repo.get_by_platform_user(platform, message.from_user.id),
-            container.session_repo.get(platform, message.from_user.id),
+        loading = await message.answer(MY_ORDERS_LOADING_TEXT, parse_mode="HTML")
+        asyncio.create_task(
+            _bootstrap_my_orders(
+                message,
+                page=1,
+                replace_message=False,
+                loading_message=loading,
+            )
         )
-        if profile and profile.is_blocked_by_admin:
-            await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
-            return
-        if existing_session is not None:
-            session = existing_session
-            asyncio.create_task(
-                container.profile_flow.ensure_session(
-                    platform,
-                    message.from_user.id,
-                    known_profile=profile,
-                    existing_session=existing_session,
-                )
-            )
-        else:
-            session = await container.profile_flow.get_or_create_session(
-                platform,
-                message.from_user.id,
-                known_profile=profile,
-            )
-        await _open_my_orders(message, session, page=1, profile=profile)
 
     @router.message(F.text.in_({"Фильтры заказов", "🎛 Фильтры заказов"}))
     async def show_filters(message: Message) -> None:
         if not message.from_user:
             return
-        profile, existing_session = await asyncio.gather(
-            container.profile_repo.get_by_platform_user(platform, message.from_user.id),
-            container.session_repo.get(platform, message.from_user.id),
+        loading = await message.answer(MY_ORDERS_LOADING_TEXT, parse_mode="HTML")
+        asyncio.create_task(
+            _bootstrap_my_orders(
+                message,
+                page=1,
+                replace_message=False,
+                loading_message=loading,
+            )
         )
-        if profile and profile.is_blocked_by_admin:
-            await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
+
+    async def _paginate_my_orders(
+        callback: CallbackQuery,
+        *,
+        page: int,
+        loading_message: Message,
+    ) -> None:
+        if not callback.from_user or not callback.message:
             return
-        if existing_session is not None:
-            session = existing_session
-            asyncio.create_task(
-                container.profile_flow.ensure_session(
-                    platform,
-                    message.from_user.id,
-                    known_profile=profile,
-                    existing_session=existing_session,
+        try:
+            profile, existing_session = await asyncio.gather(
+                container.profile_repo.get_by_platform_user(platform, callback.from_user.id),
+                container.session_repo.get(platform, callback.from_user.id),
+            )
+            if profile and profile.is_blocked_by_admin:
+                await edit_panel_message(
+                    loading_message,
+                    text="Ваш доступ ограничен администратором. Обратитесь в поддержку.",
                 )
+                return
+            if existing_session is not None:
+                session = existing_session
+                asyncio.create_task(
+                    container.profile_flow.ensure_session(
+                        platform,
+                        callback.from_user.id,
+                        known_profile=profile,
+                        existing_session=existing_session,
+                    )
+                )
+            else:
+                session = await container.profile_flow.get_or_create_session(
+                    platform,
+                    callback.from_user.id,
+                    known_profile=profile,
+                )
+            await open_my_orders_panel(
+                callback.message,
+                session,
+                container,
+                container.buyout_flow,
+                page=page,
+                user_id=callback.from_user.id,
+                build_reply_markup=_orders_reply_markup,
+                replace_message=True,
+                profile=profile,
+                loading_message=loading_message,
             )
-        else:
-            session = await container.profile_flow.get_or_create_session(
-                platform,
-                message.from_user.id,
-                known_profile=profile,
+        except Exception:
+            logger.exception("Failed to paginate my orders for user_id=%s", callback.from_user.id)
+
+    async def _apply_filter_and_open(
+        callback: CallbackQuery,
+        *,
+        action: str,
+        loading_message: Message,
+    ) -> None:
+        if not callback.from_user or not callback.message:
+            return
+        try:
+            session = await container.profile_flow.get_or_create_session(platform, callback.from_user.id)
+            await container.buyout_flow.prepare_preferences(session)
+            raw = action.split(":", maxsplit=1)[1]
+            if raw == "reset":
+                await container.buyout_flow.reset_status_filters(session)
+            else:
+                try:
+                    status = OrderStatus(raw)
+                except ValueError:
+                    await edit_panel_message(loading_message, text="Неизвестный фильтр.")
+                    return
+                await container.buyout_flow.toggle_status_filter(session, status)
+            page_match = re.search(
+                r"Страница (\d+)/",
+                callback.message.text or callback.message.caption or "",
             )
-        await _open_my_orders(message, session, page=1, profile=profile)
+            page = int(page_match.group(1)) if page_match else 1
+            profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
+            await open_my_orders_panel(
+                callback.message,
+                session,
+                container,
+                container.buyout_flow,
+                page=page,
+                user_id=callback.from_user.id,
+                build_reply_markup=_orders_reply_markup,
+                replace_message=True,
+                profile=profile,
+                loading_message=loading_message,
+            )
+        except Exception:
+            logger.exception("Failed to apply orders filter for user_id=%s", callback.from_user.id)
 
     @router.callback_query()
     async def my_orders_pagination(callback: CallbackQuery) -> None:
@@ -754,26 +848,18 @@ def build_buyout_router(container: AppContainer) -> Router:
             await callback.answer("Неизвестное действие", show_alert=True)
             return
         if action.startswith("orders_filter:"):
-            session = await container.profile_flow.get_or_create_session(platform, callback.from_user.id)
-            await container.buyout_flow.prepare_preferences(session)
-            raw = action.split(":", maxsplit=1)[1]
-            if raw == "reset":
-                await container.buyout_flow.reset_status_filters(session)
-            else:
-                try:
-                    status = OrderStatus(raw)
-                except ValueError:
-                    await callback.answer("Неизвестный фильтр", show_alert=True)
-                    return
-                await container.buyout_flow.toggle_status_filter(session, status)
-            page_match = re.search(r"Страница (\d+)/", callback.message.text or callback.message.caption or "")
-            page = int(page_match.group(1)) if page_match else 1
             await callback.answer("Фильтр обновлен")
-            await _open_my_orders(
-                callback.message,
-                session,
-                page=page,
-                replace_message=True,
+            loading = await callback.message.bot.send_message(
+                chat_id=callback.message.chat.id,
+                text=MY_ORDERS_LOADING_TEXT,
+                parse_mode="HTML",
+            )
+            asyncio.create_task(
+                _apply_filter_and_open(
+                    callback,
+                    action=action,
+                    loading_message=loading,
+                )
             )
             return
 
@@ -784,13 +870,18 @@ def build_buyout_router(container: AppContainer) -> Router:
         except ValueError:
             await callback.answer()
             return
-        session = await container.profile_flow.get_or_create_session(platform, callback.from_user.id)
         await callback.answer()
-        await _open_my_orders(
-            callback.message,
-            session,
-            page=page,
-            replace_message=True,
+        loading = await callback.message.bot.send_message(
+            chat_id=callback.message.chat.id,
+            text=MY_ORDERS_LOADING_TEXT,
+            parse_mode="HTML",
+        )
+        asyncio.create_task(
+            _paginate_my_orders(
+                callback,
+                page=page,
+                loading_message=loading,
+            )
         )
 
     @router.message(F.photo | F.video | F.animation | F.document)
