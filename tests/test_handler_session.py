@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from app.bot.telegram.dialog_state_groups import BUYOUT_TEXT_STATES, PROFILE_FSM_INPUT_STATES
+from app.bot.telegram.dialog_state_groups import (
+    BUYOUT_MEDIA_STATES,
+    BUYOUT_TEXT_STATES,
+    PROFILE_FSM_INPUT_STATES,
+)
 from app.bot.telegram.filters.dialog_state import DialogStatesFilter
 from app.bot.telegram.handler_session import USER_SESSION_DATA_KEY, handler_data, resolve_user_session
 from app.domain.enums import DialogState, Platform
@@ -28,6 +32,20 @@ async def test_dialog_states_filter_uses_preloaded_session() -> None:
         state=DialogState.IDLE,
     )
     assert await filt(user_session=idle) is False
+
+
+@pytest.mark.anyio
+async def test_dialog_states_filter_accepts_event_positional_arg() -> None:
+    filt = DialogStatesFilter(*BUYOUT_MEDIA_STATES)
+    session = UserSession(
+        id=1,
+        platform=Platform.TELEGRAM,
+        platform_user_id=42,
+        state=DialogState.BUYOUT_WAIT_MEDIA,
+    )
+    event = object()
+    assert await filt(event, user_session=session) is True
+    assert await filt(event, user_session=None) is False
 
 
 @pytest.mark.anyio
