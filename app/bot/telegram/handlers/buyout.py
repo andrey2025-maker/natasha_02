@@ -78,14 +78,13 @@ def build_buyout_router(container: AppContainer) -> Router:
         user_id: int,
         session,
         response: BuyoutFlowResponse,
-    ) -> InlineKeyboardMarkup | None:
-        if not response.state_data:
-            return None
+    ) -> InlineKeyboardMarkup:
+        state_data = response.state_data if isinstance(response.state_data, dict) else {}
         filters = container.buyout_flow.filter_states(session)
         return my_orders_message_keyboard(
             user_id=user_id,
-            current_page=int(response.state_data.get("page", 1)),
-            total_pages=int(response.state_data.get("total_pages", 1)),
+            current_page=int(state_data.get("page", 1)),
+            total_pages=max(1, int(state_data.get("total_pages", 1))),
             filters=filters,
             codec=callback_codec,
         )

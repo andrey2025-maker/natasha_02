@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from types import SimpleNamespace
 
 from aiogram.types import Message
 
@@ -139,6 +138,11 @@ async def enrich_my_orders_panel(
         else:
             await edit_panel_message(panel_message, text=text, reply_markup=reply_markup)
             extra_ids = []
+            if reply_markup is not None:
+                try:
+                    await panel_message.edit_reply_markup(reply_markup=reply_markup)
+                except Exception:
+                    pass
         if int(session.state_data.get("_my_orders_panel_version", 0)) != panel_version:
             return
         state_data = dict(session.state_data)
@@ -166,35 +170,22 @@ async def open_my_orders_panel(
     panel_version = int(state_data["_my_orders_panel_version"])
     session.state_data = state_data
 
-    loading_markup = await build_reply_markup(
-        user_id,
-        session,
-        SimpleNamespace(state_data={"page": page, "total_pages": 1}),
-    )
     panel_message = await present_my_orders_panel_fast(
         message,
         session,
         text=MY_ORDERS_LOADING_TEXT,
-        reply_markup=loading_markup,
+        reply_markup=None,
         replace_message=replace_message,
     )
 
     async def finalize() -> None:
         try:
             await buyout_flow.prepare_preferences(session, persist=True)
-            response = await buyout_flow.render_orders(
-                session,
-                page=page,
-                include_details=False,
-                profile=profile,
-            )
-            markup = await build_reply_markup(user_id, session, response)
-            await edit_panel_message(panel_message, text=response.text, reply_markup=markup)
             if int(session.state_data.get("_my_orders_panel_version", 0)) != panel_version:
                 return
             detailed = await buyout_flow.render_orders(
                 session,
-                page=int(response.state_data.get("page", page)),
+                page=page,
                 include_details=True,
                 profile=profile,
             )

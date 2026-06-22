@@ -7,7 +7,7 @@ from html import escape
 from aiogram import F, Router
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.exceptions import TelegramForbiddenError
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
 from app.bot.telegram.callback_panel import edit_panel_message
@@ -192,14 +192,13 @@ def build_profile_router(container: AppContainer) -> Router:
             return track_continue_keyboard(user_id, callback_codec)
         return None
 
-    async def _my_orders_reply_markup(user_id: int, session, response) -> object | None:
-        if not response.state_data:
-            return None
+    async def _my_orders_reply_markup(user_id: int, session, response) -> InlineKeyboardMarkup:
+        state_data = response.state_data if isinstance(getattr(response, "state_data", None), dict) else {}
         filters = container.buyout_flow.filter_states(session)
         return my_orders_message_keyboard(
             user_id=user_id,
-            current_page=int(response.state_data.get("page", 1)),
-            total_pages=int(response.state_data.get("total_pages", 1)),
+            current_page=int(state_data.get("page", 1)),
+            total_pages=max(1, int(state_data.get("total_pages", 1))),
             filters=filters,
             codec=callback_codec,
         )
@@ -367,6 +366,7 @@ def build_profile_router(container: AppContainer) -> Router:
             await _apply_response(callback.message, response, edit=True)
             return
         if action == "profile:buyout_orders":
+            profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
             await callback.answer()
             await open_my_orders_panel(
                 callback.message,
@@ -377,9 +377,11 @@ def build_profile_router(container: AppContainer) -> Router:
                 user_id=callback.from_user.id,
                 build_reply_markup=_my_orders_reply_markup,
                 replace_message=True,
+                profile=profile,
             )
             return
         if action == "profile:buyout_filters":
+            profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
             await callback.answer()
             await open_my_orders_panel(
                 callback.message,
@@ -390,6 +392,7 @@ def build_profile_router(container: AppContainer) -> Router:
                 user_id=callback.from_user.id,
                 build_reply_markup=_my_orders_reply_markup,
                 replace_message=True,
+                profile=profile,
             )
             return
         if action == "profile:track:open":
