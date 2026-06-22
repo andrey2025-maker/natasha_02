@@ -292,9 +292,6 @@ async def _enrich_admin_orders_panel(
         logger.exception("Failed to enrich admin orders panel")
 
 
-ADMIN_ORDERS_LOADING_TEXT = "<b>📦 Выкупы</b>\n\n<i>Загрузка…</i>"
-
-
 async def _send_orders_panel(
     message: Message,
     container: AppContainer,

@@ -77,7 +77,7 @@ def register_orders_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text.regexp(r"^order\s+status\s+\S+\s+\S+(\s*\|\s*.*)?$"))
     async def admin_order_status(message: Message) -> None:
         if not await _ensure_admin(message):
-            raise SkipHandler
+            return
         if not message.from_user or not message.text:
             return
         body = message.text[len("order status ") :].strip()

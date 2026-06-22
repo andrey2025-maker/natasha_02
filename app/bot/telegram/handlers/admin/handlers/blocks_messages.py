@@ -77,7 +77,7 @@ def register_blocks_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Блокировки")
     async def admin_blocked(message: Message) -> None:
         if not await _ensure_admin(message):
-            raise SkipHandler
+            return
         if not message.from_user:
             return
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)

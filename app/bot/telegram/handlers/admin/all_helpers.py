@@ -45,7 +45,6 @@ from app.bot.telegram.handlers.admin.media_helpers import (
 )
 from app.bot.telegram.handlers.admin.navigation import _open_user_profile_from_admin
 from app.bot.telegram.handlers.admin.orders import (
-    ADMIN_ORDERS_LOADING_TEXT,
     _default_admin_order_status_filters,
     _field_title,
     _get_admin_orders_state,

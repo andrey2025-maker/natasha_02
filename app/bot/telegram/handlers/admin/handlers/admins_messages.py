@@ -77,7 +77,7 @@ def register_admins_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Список админов")
     async def admin_list(message: Message) -> None:
         if not await _ensure_admin(message):
-            raise SkipHandler
+            return
         if not message.from_user:
             return
         is_main = message.from_user.id == container.settings.telegram.main_admin_id
@@ -102,19 +102,19 @@ def register_admins_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Добавить админа")
     async def add_admin_help(message: Message) -> None:
         if not await _ensure_admin(message):
-            raise SkipHandler
+            return
         await message.answer("Напишите: add_admin &lt;telegram_id&gt;")
 
     @router.message(F.text == "Удалить админа")
     async def remove_admin_help(message: Message) -> None:
         if not await _ensure_admin(message):
-            raise SkipHandler
+            return
         await message.answer("Напишите: del_admin &lt;telegram_id&gt;")
 
     @router.message(F.text.regexp(r"^(add_admin|del_admin)\s+\d+$"))
     async def admin_manage(message: Message) -> None:
         if not await _ensure_admin(message):
-            raise SkipHandler
+            return
         if not message.from_user or not message.text:
             return
         command, user_id_raw = message.text.split()
@@ -145,7 +145,7 @@ def register_admins_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text.regexp(r"^код\s+\d+$"))
     async def admin_profile_by_code(message: Message) -> None:
         if not await _ensure_admin(message):
-            raise SkipHandler
+            return
         if not message.text:
             return
         code = message.text.split(maxsplit=1)[1].zfill(3)

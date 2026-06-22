@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from app.bot.telegram.menu_texts import ADMIN_MENU_TEXTS, BUYOUT_DIALOG_STATES_TEXTS, DELEGATED_MENU_TEXTS
-
 FSM_CANCEL_HINT = "\n\nДля отмены отправьте /отмена"
 
 MAIN_MENU_BUTTONS = frozenset(
@@ -32,7 +30,24 @@ MAIN_MENU_BUTTONS = frozenset(
     }
 )
 
-NAVIGATION_BUTTONS = DELEGATED_MENU_TEXTS | BUYOUT_DIALOG_STATES_TEXTS | ADMIN_MENU_TEXTS
+ADMIN_REPLY_BUTTONS = frozenset(
+    {
+        "Профили",
+        "Блокировки",
+        "Заказы",
+        "Статистика",
+        "Рассылка",
+        "Утилиты",
+        "Запрещенка",
+        "Контент",
+        "Список админов",
+        "Добавить админа",
+        "Удалить админа",
+        "Готово медиа",
+    }
+)
+
+NAVIGATION_BUTTONS = MAIN_MENU_BUTTONS | ADMIN_REPLY_BUTTONS
 
 
 def fsm_prompt(text: str) -> str:

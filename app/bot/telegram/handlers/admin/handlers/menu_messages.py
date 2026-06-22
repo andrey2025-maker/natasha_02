@@ -131,34 +131,13 @@ def register_menu_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Назад")
     async def admin_back(message: Message) -> None:
         if not await _ensure_admin(message):
-            raise SkipHandler
-        await message.answer("Главное меню", reply_markup=main_menu_keyboard(include_admin=True))
-
-    @router.message(F.text.in_({"Вопросы", "❓ Вопросы"}))
-    async def admin_faq_menu(message: Message) -> None:
-        if not await _ensure_admin(message):
-            raise SkipHandler
-        if not message.from_user:
             return
-        session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
-        utils_state = _get_admin_utils_state(session)
-        _reset_admin_utils_waiters(utils_state)
-        await _save_admin_utils_state(container, session, utils_state)
-        await open_faq_admin_panel(
-            message,
-            container=container,
-            codec=callback_codec,
-            user_id=message.from_user.id,
-            utils_state=utils_state,
-            faq_media_store=faq_media_store,
-            edit=False,
-        )
-        await _save_admin_utils_state(container, session, utils_state)
+        await message.answer("Главное меню", reply_markup=main_menu_keyboard(include_admin=True))
 
     @router.message(F.text == "Профили")
     async def admin_profiles(message: Message) -> None:
         if not await _ensure_admin(message):
-            raise SkipHandler
+            return
         if not message.from_user:
             return
         session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
@@ -177,7 +156,7 @@ def register_menu_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Заказы")
     async def admin_orders(message: Message) -> None:
         if not await _ensure_admin(message):
-            raise SkipHandler
+            return
         await message.answer(
             "📦 Раздел заказов.\n"
             "Используйте команды: «Выкупы» или «Самовыкуп».",
@@ -186,38 +165,22 @@ def register_menu_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Выкупы")
     async def admin_orders_buyout(message: Message) -> None:
         if not await _ensure_admin(message):
-            raise SkipHandler
+            return
         if not message.from_user:
             return
-        user_id = message.from_user.id
-        loading = await message.answer(ADMIN_ORDERS_LOADING_TEXT, parse_mode="HTML")
-
-        async def bootstrap_admin_orders() -> None:
-            try:
-                session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, user_id)
-                state = _get_admin_orders_state(session)
-                state["page"] = 1
-                state["search_results"] = None
-                state["awaiting_order_search_query"] = False
-                state["order_search_mode"] = None
-                await _save_admin_orders_state(container, session, state)
-                await _send_orders_panel(
-                    loading,
-                    container,
-                    callback_codec,
-                    user_id,
-                    state,
-                    session,
-                )
-            except Exception:
-                logger.exception("Failed to open admin buyout orders for user_id=%s", user_id)
-
-        asyncio.create_task(bootstrap_admin_orders())
+        session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, message.from_user.id)
+        state = _get_admin_orders_state(session)
+        state["page"] = 1
+        state["search_results"] = None
+        state["awaiting_order_search_query"] = False
+        state["order_search_mode"] = None
+        await _save_admin_orders_state(container, session, state)
+        await _send_orders_panel(message, container, callback_codec, message.from_user.id, state, session)
 
     @router.message(F.text == "Самовыкуп")
     async def admin_orders_self_buyout(message: Message) -> None:
         if not await _ensure_admin(message):
-            raise SkipHandler
+            return
         await message.answer(
             "Пока не сделано, Мать Китайчат не объяснила всю суть PRO-CARGO и 1999CARGO! "
             "А так понимание как сюда засунуть пикалку заказов есть, нужно лишь больше информации "
@@ -227,14 +190,14 @@ def register_menu_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Статистика")
     async def admin_stats(message: Message) -> None:
         if not await _ensure_admin(message):
-            raise SkipHandler
+            return
         text = await container.stats_service.build_overview_text()
         await message.answer(text, parse_mode="HTML")
 
     @router.message(F.text == "Рассылка")
     async def admin_broadcast(message: Message) -> None:
         if not await _ensure_admin(message):
-            raise SkipHandler
+            return
         await message.answer(
             "Выберите аудиторию для рассылки, затем отправьте текст или одно медиа с подписью.",
             reply_markup=_broadcast_keyboard(message.from_user.id, callback_codec),
@@ -243,7 +206,7 @@ def register_menu_messages(router: Router, ctx: AdminContext) -> None:
     @router.message(F.text == "Утилиты")
     async def admin_utils(message: Message) -> None:
         if not await _ensure_admin(message):
-            raise SkipHandler
+            return
         await message.answer(
             UTILS_PANEL_TEXT,
             reply_markup=_utils_inline_keyboard(message.from_user.id, callback_codec),

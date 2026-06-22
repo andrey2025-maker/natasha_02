@@ -122,10 +122,6 @@ class InMemorySessionRepository(SessionRepository):
             self._next_id += 1
         stored.updated_at = datetime.utcnow()
         self._sessions[(stored.platform.value, stored.platform_user_id)] = stored
-        if stored.platform == Platform.TELEGRAM:
-            from app.bot.telegram.handler_session import drop_user_session_cache
-
-            drop_user_session_cache(int(stored.platform_user_id))
         return deepcopy(stored)
 
 

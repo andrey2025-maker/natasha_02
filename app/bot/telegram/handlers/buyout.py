@@ -14,14 +14,12 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
 from app.bot.telegram.callback_panel import edit_content_with_media, edit_panel_message
-from app.bot.telegram.dialog_state_groups import BUYOUT_MEDIA_STATES, BUYOUT_TEXT_STATES
-from app.bot.telegram.filters.dialog_state import DialogStatesFilter
-from app.bot.telegram.handler_session import handler_data, resolve_user_session
 from app.bot.telegram.keyboards.profile import (
     buyout_add_more_inline_keyboard,
     main_menu_keyboard,
     my_orders_message_keyboard,
 )
+from app.bot.telegram.menu_texts import DELEGATED_MENU_TEXTS
 from app.bot.telegram.my_orders_media import MY_ORDERS_LOADING_TEXT, open_my_orders_panel
 from app.bot.telegram.user_access import is_user_blocked_by_admin
 from app.core.container import AppContainer
@@ -55,56 +53,38 @@ def build_buyout_router(container: AppContainer) -> Router:
     async def _is_blocked_user(user_id: int) -> bool:
         return await is_user_blocked_by_admin(container, user_id)
 
-    _buyout_text_state_filter = DialogStatesFilter(*BUYOUT_TEXT_STATES, container=container)
-    _buyout_media_state_filter = DialogStatesFilter(*BUYOUT_MEDIA_STATES, container=container)
+    _BUYOUT_TEXT_STATES = frozenset(
+        {
+            DialogState.BUYOUT_WAIT_LINK,
+            DialogState.BUYOUT_WAIT_DETAILS,
+            DialogState.BUYOUT_ADD_MORE,
+        }
+    )
 
-    async def _buyout_reply_markup(message: Message, response: BuyoutFlowResponse):
+    async def _reply(message: Message, response: BuyoutFlowResponse) -> None:
+        kwargs = {"parse_mode": "HTML"}
         if response.reply_markup is not None:
-            return response.reply_markup
-        if response.state == DialogState.BUYOUT_ADD_MORE and message.from_user:
-            return buyout_add_more_inline_keyboard(
+            kwargs["reply_markup"] = response.reply_markup
+        elif response.state == DialogState.BUYOUT_ADD_MORE and message.from_user:
+            kwargs["reply_markup"] = buyout_add_more_inline_keyboard(
                 user_id=message.from_user.id,
                 codec=callback_codec,
             )
-        if response.state == DialogState.IDLE:
+        elif response.state == DialogState.IDLE:
             is_admin = bool(message.from_user and await container.admin_service.is_admin(message.from_user.id))
-            return main_menu_keyboard(include_admin=is_admin)
-        return None
-
-    async def _reply(message: Message, response: BuyoutFlowResponse) -> None:
-        reply_markup = await _buyout_reply_markup(message, response)
-        await message.answer(response.text, parse_mode="HTML", reply_markup=reply_markup)
+            kwargs["reply_markup"] = main_menu_keyboard(include_admin=is_admin)
+        await message.answer(response.text, **kwargs)
 
     @router.message(F.text.in_({"Заказ выкупа", "🛍 Заказ выкупа"}))
-    async def start_buyout(message: Message, user_session=None) -> None:
+    async def start_buyout(message: Message) -> None:
         if not message.from_user:
             return
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        loading = await message.answer("🛍 <b>Заказ выкупа</b>\n\n<i>Загрузка…</i>", parse_mode="HTML")
-
-        async def bootstrap_buyout() -> None:
-            try:
-                session = await resolve_user_session(
-                    handler_data(user_session),
-                    container,
-                    platform,
-                    message.from_user.id,
-                )
-                if session is None:
-                    return
-                response = await container.buyout_flow.start(session)
-                reply_markup = await _buyout_reply_markup(message, response)
-                await edit_panel_message(
-                    loading,
-                    text=response.text,
-                    reply_markup=reply_markup,
-                )
-            except Exception:
-                logger.exception("Failed to start buyout for user_id=%s", message.from_user.id)
-
-        asyncio.create_task(bootstrap_buyout())
+        session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
+        response = await container.buyout_flow.start(session)
+        await _reply(message, response)
 
     def _orders_reply_markup(
         user_id: int,
@@ -121,13 +101,6 @@ def build_buyout_router(container: AppContainer) -> Router:
             codec=callback_codec,
         )
 
-    async def _resolve_orders_session(user_id: int, profile=None):
-        return await container.profile_flow.get_or_create_session(
-            platform,
-            user_id,
-            known_profile=profile,
-        )
-
     async def _bootstrap_my_orders(
         message: Message,
         *,
@@ -138,14 +111,32 @@ def build_buyout_router(container: AppContainer) -> Router:
         if not message.from_user:
             return
         try:
-            profile = await container.profile_repo.get_by_platform_user(platform, message.from_user.id)
+            profile, existing_session = await asyncio.gather(
+                container.profile_repo.get_by_platform_user(platform, message.from_user.id),
+                container.session_repo.get(platform, message.from_user.id),
+            )
             if profile and profile.is_blocked_by_admin:
                 await edit_panel_message(
                     loading_message,
                     text="Ваш доступ ограничен администратором. Обратитесь в поддержку.",
                 )
                 return
-            session = await _resolve_orders_session(message.from_user.id, profile)
+            if existing_session is not None:
+                session = existing_session
+                asyncio.create_task(
+                    container.profile_flow.ensure_session(
+                        platform,
+                        message.from_user.id,
+                        known_profile=profile,
+                        existing_session=existing_session,
+                    )
+                )
+            else:
+                session = await container.profile_flow.get_or_create_session(
+                    platform,
+                    message.from_user.id,
+                    known_profile=profile,
+                )
             await open_my_orders_panel(
                 message,
                 session,
@@ -160,24 +151,19 @@ def build_buyout_router(container: AppContainer) -> Router:
             )
         except Exception:
             logger.exception("Failed to bootstrap my orders for user_id=%s", message.from_user.id)
-            try:
-                await edit_panel_message(
-                    loading_message,
-                    text="Не удалось загрузить заказы. Попробуйте ещё раз.",
-                )
-            except Exception:
-                pass
 
     @router.message(F.text.in_({"Мои заказы", "📦 Мои заказы"}))
     async def show_my_orders(message: Message) -> None:
         if not message.from_user:
             return
         loading = await message.answer(MY_ORDERS_LOADING_TEXT, parse_mode="HTML")
-        await _bootstrap_my_orders(
-            message,
-            page=1,
-            replace_message=False,
-            loading_message=loading,
+        asyncio.create_task(
+            _bootstrap_my_orders(
+                message,
+                page=1,
+                replace_message=False,
+                loading_message=loading,
+            )
         )
 
     @router.message(F.text.in_({"Фильтры заказов", "🎛 Фильтры заказов"}))
@@ -185,11 +171,13 @@ def build_buyout_router(container: AppContainer) -> Router:
         if not message.from_user:
             return
         loading = await message.answer(MY_ORDERS_LOADING_TEXT, parse_mode="HTML")
-        await _bootstrap_my_orders(
-            message,
-            page=1,
-            replace_message=False,
-            loading_message=loading,
+        asyncio.create_task(
+            _bootstrap_my_orders(
+                message,
+                page=1,
+                replace_message=False,
+                loading_message=loading,
+            )
         )
 
     async def _paginate_my_orders(
@@ -201,14 +189,32 @@ def build_buyout_router(container: AppContainer) -> Router:
         if not callback.from_user or not callback.message:
             return
         try:
-            profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
+            profile, existing_session = await asyncio.gather(
+                container.profile_repo.get_by_platform_user(platform, callback.from_user.id),
+                container.session_repo.get(platform, callback.from_user.id),
+            )
             if profile and profile.is_blocked_by_admin:
                 await edit_panel_message(
                     loading_message,
                     text="Ваш доступ ограничен администратором. Обратитесь в поддержку.",
                 )
                 return
-            session = await _resolve_orders_session(callback.from_user.id, profile)
+            if existing_session is not None:
+                session = existing_session
+                asyncio.create_task(
+                    container.profile_flow.ensure_session(
+                        platform,
+                        callback.from_user.id,
+                        known_profile=profile,
+                        existing_session=existing_session,
+                    )
+                )
+            else:
+                session = await container.profile_flow.get_or_create_session(
+                    platform,
+                    callback.from_user.id,
+                    known_profile=profile,
+                )
             await open_my_orders_panel(
                 callback.message,
                 session,
@@ -223,13 +229,6 @@ def build_buyout_router(container: AppContainer) -> Router:
             )
         except Exception:
             logger.exception("Failed to paginate my orders for user_id=%s", callback.from_user.id)
-            try:
-                await edit_panel_message(
-                    loading_message,
-                    text="Не удалось загрузить заказы. Попробуйте ещё раз.",
-                )
-            except Exception:
-                pass
 
     async def _apply_filter_and_open(
         callback: CallbackQuery,
@@ -864,15 +863,17 @@ def build_buyout_router(container: AppContainer) -> Router:
                 text=MY_ORDERS_LOADING_TEXT,
                 parse_mode="HTML",
             )
-            await _apply_filter_and_open(
-                callback,
-                action=action,
-                loading_message=loading,
+            asyncio.create_task(
+                _apply_filter_and_open(
+                    callback,
+                    action=action,
+                    loading_message=loading,
+                )
             )
             return
 
         if not action.startswith("my_orders:"):
-            raise SkipHandler
+            return
         try:
             page = int(action.split(":", maxsplit=1)[1])
         except ValueError:
@@ -884,26 +885,26 @@ def build_buyout_router(container: AppContainer) -> Router:
             text=MY_ORDERS_LOADING_TEXT,
             parse_mode="HTML",
         )
-        await _paginate_my_orders(
-            callback,
-            page=page,
-            loading_message=loading,
+        asyncio.create_task(
+            _paginate_my_orders(
+                callback,
+                page=page,
+                loading_message=loading,
+            )
         )
 
-    @router.message(_buyout_media_state_filter, F.photo | F.video | F.animation | F.document)
-    async def handle_buyout_media(message: Message, user_session=None) -> None:
+    @router.message(F.photo | F.video | F.animation | F.document)
+    async def handle_buyout_media(message: Message) -> None:
         if not message.from_user:
+            raise SkipHandler
+        session = await container.session_repo.get(platform, message.from_user.id)
+        if not session or session.state != DialogState.BUYOUT_WAIT_MEDIA:
             raise SkipHandler
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        session = await resolve_user_session(
-            handler_data(user_session),
-            container,
-            platform,
-            message.from_user.id,
-        )
-        if session is None or session.state != DialogState.BUYOUT_WAIT_MEDIA:
+        session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
+        if session.state != DialogState.BUYOUT_WAIT_MEDIA:
             raise SkipHandler
         user_key = f"tg:{message.from_user.id}"
         if not container.rate_limiter.allow_request(user_key, "<media>"):
@@ -1091,23 +1092,21 @@ def build_buyout_router(container: AppContainer) -> Router:
         except Exception:
             pass
 
-    @router.message(_buyout_text_state_filter, F.text)
-    async def buyout_text_flow(message: Message, user_session=None) -> None:
+    @router.message(F.text)
+    async def buyout_text_flow(message: Message) -> None:
         if not message.from_user or not message.text:
             raise SkipHandler
+        if message.text in DELEGATED_MENU_TEXTS:
+            raise SkipHandler
         if message.text.startswith("/"):
+            raise SkipHandler
+        session = await container.session_repo.get(platform, message.from_user.id)
+        if not session or session.state not in _BUYOUT_TEXT_STATES:
             raise SkipHandler
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        session = await resolve_user_session(
-            handler_data(user_session),
-            container,
-            platform,
-            message.from_user.id,
-        )
-        if session is None or session.state not in BUYOUT_TEXT_STATES:
-            raise SkipHandler
+        session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
         user_key = f"tg:{message.from_user.id}"
         if not container.rate_limiter.allow_request(user_key, message.text):
             return

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-import logging
 from html import escape
 
 from aiogram import F, Router
@@ -12,9 +10,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
 from app.bot.telegram.callback_panel import edit_content_with_media, edit_panel_message, message_has_media
 from app.bot.telegram.bot_api import api_copy_message, api_send_message
-from app.bot.telegram.handlers.admin import clear_admin_state_on_menu_nav
 from app.bot.telegram.mirror_bot import skip_dialog_mirror
-from app.bot.telegram.user_access import is_user_blocked_by_admin
 from app.core.container import AppContainer
 from app.domain.enums import Platform
 from app.services.admin_tools_service import (
@@ -26,8 +22,6 @@ from app.services.admin_tools_service import (
     send_content_with_media_to_telegram,
 )
 from app.bot.telegram.handlers.questions_topic import handle_questions_process_callback
-
-logger = logging.getLogger(__name__)
 
 
 def build_questions_router(container: AppContainer) -> Router:
@@ -49,26 +43,8 @@ def build_questions_router(container: AppContainer) -> Router:
     )
 
     async def _is_blocked_user(user_id: int) -> bool:
-        return await is_user_blocked_by_admin(container, user_id)
-
-    def _schedule_clear_admin_menu_state(message: Message) -> None:
-        if not message.from_user:
-            return
-
-        async def _clear() -> None:
-            try:
-                await clear_admin_state_on_menu_nav(
-                    container,
-                    platform=Platform.TELEGRAM,
-                    user_id=message.from_user.id,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to clear admin menu state for user_id=%s",
-                    message.from_user.id,
-                )
-
-        asyncio.create_task(_clear())
+        profile = await container.profile_repo.get_by_platform_user(Platform.TELEGRAM, user_id)
+        return bool(profile and profile.is_blocked_by_admin)
 
     @router.message(F.chat.type == "private", F.text.in_({"Запрещенные товары", "🚫 Запрещенные товары"}))
     async def prohibited_goods(message: Message) -> None:
@@ -77,9 +53,7 @@ def build_questions_router(container: AppContainer) -> Router:
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        panel = await message.answer("🚫 <i>Загрузка…</i>", parse_mode="HTML")
-        _schedule_clear_admin_menu_state(message)
-        asyncio.create_task(_finalize_static_content(message, panel, prohibited_store))
+        await _send_static_content(message, prohibited_store)
 
     @router.message(F.chat.type == "private", F.text.in_({"Как работает доставка", "🚚 Как работает доставка"}))
     async def delivery_info(message: Message) -> None:
@@ -88,9 +62,7 @@ def build_questions_router(container: AppContainer) -> Router:
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        panel = await message.answer("🚚 <i>Загрузка…</i>", parse_mode="HTML")
-        _schedule_clear_admin_menu_state(message)
-        asyncio.create_task(_finalize_static_content(message, panel, delivery_store))
+        await _send_static_content(message, delivery_store)
 
     @router.message(F.chat.type == "private", F.text.in_({"Наши контакты", "☎️ Наши контакты"}))
     async def contacts_info(message: Message) -> None:
@@ -99,30 +71,23 @@ def build_questions_router(container: AppContainer) -> Router:
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        panel = await message.answer("☎️ <i>Загрузка…</i>", parse_mode="HTML")
-        _schedule_clear_admin_menu_state(message)
-        asyncio.create_task(_finalize_static_content(message, panel, contacts_store))
+        await _send_static_content(message, contacts_store)
 
     @router.message(F.chat.type == "private", F.text.in_({"Вопросы", "❓ Вопросы"}))
     async def faq_root(message: Message) -> None:
         if not message.from_user:
             return
-        if await container.admin_service.is_admin(message.from_user.id):
-            raise SkipHandler
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
-        panel = await message.answer("❓ <i>Загрузка…</i>", parse_mode="HTML")
-        _schedule_clear_admin_menu_state(message)
-        asyncio.create_task(
-            _finalize_faq_root(
-                message=message,
-                panel=panel,
-                user_id=message.from_user.id,
-                container=container,
-                codec=callback_codec,
-                faq_media_store=faq_media_store,
-            )
+        await _send_section(
+            message=message,
+            user_id=message.from_user.id,
+            container=container,
+            codec=callback_codec,
+            faq_media_store=faq_media_store,
+            section_id=None,
+            edit=False,
         )
 
     @router.message(F.chat.type.in_({"group", "supergroup"}), F.reply_to_message, F.text)
@@ -222,8 +187,6 @@ def build_questions_router(container: AppContainer) -> Router:
         if not action.startswith("faq:"):
             raise SkipHandler
 
-        await callback.answer()
-
         raw_section = action.split(":", maxsplit=1)[1]
         if raw_section == "root":
             section_id = None
@@ -231,9 +194,10 @@ def build_questions_router(container: AppContainer) -> Router:
             try:
                 section_id = int(raw_section)
             except ValueError:
-                await callback.message.answer("Неверный раздел.")
+                await callback.answer("Неверный раздел", show_alert=True)
                 return
 
+        await callback.answer()
         await _send_section(
             message=callback.message,
             user_id=callback.from_user.id,
@@ -247,59 +211,6 @@ def build_questions_router(container: AppContainer) -> Router:
     return router
 
 
-async def _finalize_faq_root(
-    *,
-    message: Message,
-    panel: Message,
-    user_id: int,
-    container: AppContainer,
-    codec: CallbackCodec,
-    faq_media_store: FaqMediaStore,
-) -> None:
-    try:
-        await _send_section(
-            message=panel,
-            user_id=user_id,
-            container=container,
-            codec=codec,
-            faq_media_store=faq_media_store,
-            section_id=None,
-            edit=True,
-        )
-    except Exception:
-        logger.exception("Failed to load FAQ root for user_id=%s", user_id)
-        try:
-            await edit_panel_message(
-                panel,
-                text="❓ <b>Вопросы</b>\n\nНе удалось загрузить раздел. Попробуйте ещё раз.",
-            )
-        except Exception:
-            pass
-
-
-async def _finalize_static_content(
-    message: Message,
-    panel: Message,
-    store: StaticContentStore,
-) -> None:
-    try:
-        text, media_items = await asyncio.gather(store.get_text(), store.get_media_items())
-        if media_items:
-            try:
-                await panel.delete()
-            except Exception:
-                pass
-            await send_content_with_media_to_telegram(
-                message,
-                text=text,
-                media_items=media_items,
-            )
-            return
-        await edit_panel_message(panel, text=text)
-    except Exception:
-        logger.exception("Failed to load static content for chat_id=%s", message.chat.id)
-
-
 async def _send_section(
     message: Message,
     user_id: int,
@@ -309,20 +220,9 @@ async def _send_section(
     section_id: int | None,
     edit: bool,
 ) -> None:
-    if section_id is not None:
-        current, children, path_text, media_items = await asyncio.gather(
-            container.faq_service.get_section(section_id),
-            container.faq_service.list_children(section_id),
-            container.faq_service.breadcrumbs(section_id),
-            faq_media_store.get_media_items(section_id),
-        )
-    else:
-        current = None
-        children, path_text = await asyncio.gather(
-            container.faq_service.list_children(section_id),
-            container.faq_service.breadcrumbs(section_id),
-        )
-        media_items = []
+    current = await container.faq_service.get_section(section_id) if section_id is not None else None
+    children = await container.faq_service.list_children(section_id)
+    path_text = await container.faq_service.breadcrumbs(section_id)
 
     body_lines = [f"<b>{escape(path_text, quote=False)}</b>"]
     if current and current.content_text:
@@ -342,6 +242,10 @@ async def _send_section(
         children=children,
     )
     text = "\n".join(body_lines)
+
+    media_items: list[dict] = []
+    if section_id is not None:
+        media_items = await faq_media_store.get_media_items(section_id)
 
     if media_items:
         await edit_content_with_media(

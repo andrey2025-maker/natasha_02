@@ -36,7 +36,33 @@ def format_omsk_now() -> str:
     return datetime.now(ZoneInfo("Asia/Omsk")).strftime("%d.%m.%Y %H:%M")
 
 
-from app.bot.telegram.menu_texts import MENU_TEXTS_SKIP_IDLE_FORWARD
+MENU_TEXTS_SKIP_QUESTIONS_ALERT = {
+    "Профиль",
+    "👤 Профиль",
+    "Заполнить профиль",
+    "Да",
+    "Имя",
+    "Тел.",
+    "Город",
+    "Есть профиль ВК",
+    "❓ Вопросы",
+    "Вопросы",
+    "🚫 Запрещенные товары",
+    "Запрещенные товары",
+    "☎️ Наши контакты",
+    "Наши контакты",
+    "🚚 Как работает доставка",
+    "Как работает доставка",
+    "🛍 Заказ выкупа",
+    "Заказ выкупа",
+    "📦 Мои заказы",
+    "Мои заказы",
+    "🎛 Фильтры заказов",
+    "Фильтры заказов",
+    "Ещё товар",
+    "Нет",
+    "🛠 Админ",
+}
 
 
 async def should_forward_idle_message_to_questions(
@@ -51,7 +77,7 @@ async def should_forward_idle_message_to_questions(
     text = (message.text or "").strip()
     if text.startswith("/"):
         return False
-    if text in MENU_TEXTS_SKIP_IDLE_FORWARD:
+    if text in MENU_TEXTS_SKIP_QUESTIONS_ALERT:
         return False
     if await container.admin_service.is_admin(message.from_user.id):
         return False
@@ -82,7 +108,7 @@ def can_skip_idle_questions_precheck(message: Message) -> bool:
     text = (message.text or "").strip()
     if text.startswith("/"):
         return True
-    return text in MENU_TEXTS_SKIP_IDLE_FORWARD
+    return text in MENU_TEXTS_SKIP_QUESTIONS_ALERT
 
 
 def processor_display_name(user) -> str:

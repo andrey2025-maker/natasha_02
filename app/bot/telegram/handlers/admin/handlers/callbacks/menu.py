@@ -85,14 +85,8 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
 
         if action.startswith("admin:menu:"):
             menu_action = action.split(":", maxsplit=2)[2]
-            if menu_action == "admins":
-                is_main = callback.from_user.id == container.settings.telegram.main_admin_id
-                open_for_all = await admin_access_store.is_open_for_all_admins()
-                if not is_main and not open_for_all:
-                    await callback.answer("Раздел доступен только главному админу.", show_alert=True)
-                    return
-            await callback.answer()
             if menu_action == "profiles":
+                await callback.answer()
                 await _send_profiles_page(
                     callback.message,
                     user_id=callback.from_user.id,
@@ -103,6 +97,7 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
                 )
                 return
             if menu_action == "blocks":
+                await callback.answer()
                 await edit_panel_message(callback.message, text=
                     "Управление блокировками:",
                     reply_markup=_blocks_menu_keyboard(callback.from_user.id, callback_codec),
@@ -116,6 +111,7 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
                 state["awaiting_order_search_query"] = False
                 state["order_search_mode"] = None
                 await _save_admin_orders_state(container, session, state)
+                await callback.answer()
                 await _send_orders_panel(
                     callback.message,
                     container,
@@ -128,6 +124,7 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
                 return
             if menu_action == "stats":
                 text = await container.stats_service.build_overview_text()
+                await callback.answer()
                 await edit_panel_message(callback.message, text=text, parse_mode="HTML")
                 return
             if menu_action == "faq":
@@ -135,6 +132,7 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
                 state = _get_admin_utils_state(session)
                 _reset_admin_utils_waiters(state)
                 await _save_admin_utils_state(container, session, state)
+                await callback.answer()
                 await open_faq_admin_panel(
                     callback.message,
                     container=container,
@@ -149,8 +147,12 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
             if menu_action == "admins":
                 is_main = callback.from_user.id == container.settings.telegram.main_admin_id
                 open_for_all = await admin_access_store.is_open_for_all_admins()
+                if not is_main and not open_for_all:
+                    await callback.answer("Раздел доступен только главному админу.", show_alert=True)
+                    return
                 admin_ids = await container.admin_service.list_admins()
                 lines = [f"- {admin_id}" for admin_id in admin_ids]
+                await callback.answer()
                 await edit_panel_message(callback.message, text=
                     "Админы:\n" + "\n".join(lines),
                     reply_markup=_admins_access_keyboard(
@@ -164,12 +166,14 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
                 )
                 return
             if menu_action == "broadcast":
+                await callback.answer()
                 await edit_panel_message(callback.message, text=
                     "Выберите аудиторию для рассылки, затем отправьте текст или одно медиа с подписью.",
                     reply_markup=_broadcast_keyboard(callback.from_user.id, callback_codec),
                 )
                 return
             if menu_action == "utils":
+                await callback.answer()
                 await edit_panel_message(
                     callback.message,
                     text=UTILS_PANEL_TEXT,
@@ -188,12 +192,14 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
                 tracks_state = _get_admin_tracks_state(session)
                 reset_admin_tracks_state(tracks_state)
                 await _save_admin_tracks_state(container, session, tracks_state)
+                await callback.answer()
                 await open_admin_tracks_panel(
                     callback.message,
                     user_id=callback.from_user.id,
                     codec=callback_codec,
                 )
                 return
+            await callback.answer()
             return
 
 

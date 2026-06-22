@@ -11,9 +11,6 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
 from app.bot.telegram.callback_panel import edit_panel_message
-from app.bot.telegram.dialog_state_groups import BUYOUT_ALL_STATES, PROFILE_AND_TRACK_INPUT_STATES
-from app.bot.telegram.filters.dialog_state import DialogStatesFilter
-from app.bot.telegram.handler_session import fetch_user_session, handler_data, resolve_user_session
 from app.bot.telegram.keyboards.main_menu import my_orders_message_keyboard
 from app.bot.telegram.keyboards.profile import (
     platforms_keyboard,
@@ -21,7 +18,7 @@ from app.bot.telegram.keyboards.profile import (
     track_continue_keyboard,
     track_mode_keyboard,
 )
-from app.bot.telegram.menu_texts import ADMIN_MENU_TEXTS, DELEGATED_MENU_TEXTS
+from app.bot.telegram.menu_texts import DELEGATED_MENU_TEXTS
 from app.bot.telegram.my_orders_media import MY_ORDERS_LOADING_TEXT, open_my_orders_panel
 from app.bot.telegram.user_access import is_user_blocked_by_admin
 from app.bot.texts import messages as msg
@@ -155,14 +152,14 @@ def build_profile_router(container: AppContainer) -> Router:
     async def _is_blocked_user(user_id: int) -> bool:
         return await is_user_blocked_by_admin(container, user_id)
 
-    _profile_input_state_filter = DialogStatesFilter(*PROFILE_AND_TRACK_INPUT_STATES, container=container)
-    _not_buyout_media_filter = ~DialogStatesFilter(*BUYOUT_ALL_STATES, container=container)
-    _idle_media_filter = DialogStatesFilter(DialogState.IDLE, container=container)
-    _profile_fsm_media_filter = DialogStatesFilter(*PROFILE_AND_TRACK_INPUT_STATES, container=container)
-
-    @router.message(F.text.in_(ADMIN_MENU_TEXTS))
-    async def profile_skip_admin_menu(message: Message) -> None:
-        raise SkipHandler
+    _BUYOUT_SKIP_STATES = frozenset(
+        {
+            DialogState.BUYOUT_WAIT_MEDIA,
+            DialogState.BUYOUT_WAIT_LINK,
+            DialogState.BUYOUT_WAIT_DETAILS,
+            DialogState.BUYOUT_ADD_MORE,
+        }
+    )
 
     async def _post_user_tracks_to_group(
         message: Message,
@@ -220,25 +217,24 @@ def build_profile_router(container: AppContainer) -> Router:
     async def profile_menu(message: Message) -> None:
         if not message.from_user:
             return
-        user_id = message.from_user.id
-        panel = await message.answer(
-            msg.profile_intro(),
-            parse_mode="HTML",
-            reply_markup=profile_menu_keyboard("ВК", user_id, callback_codec, profile=None),
+        profile = await container.profile_repo.get_by_platform_user(platform, message.from_user.id)
+        if profile and profile.is_blocked_by_admin:
+            await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
+            return
+        if profile and profile.is_filled:
+            text = msg.profile_summary(profile)
+        else:
+            text = msg.profile_intro()
+        reply_markup = profile_menu_keyboard(
+            "ВК",
+            message.from_user.id,
+            callback_codec,
+            profile=profile,
         )
+        await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
 
         async def finalize_profile_menu() -> None:
             try:
-                profile = await container.profile_repo.get_by_platform_user(platform, user_id)
-                if profile and profile.is_blocked_by_admin:
-                    await edit_panel_message(
-                        panel,
-                        text="Ваш доступ ограничен администратором. Обратитесь в поддержку.",
-                    )
-                    return
-                text = msg.profile_summary(profile) if profile and profile.is_filled else msg.profile_intro()
-                reply_markup = profile_menu_keyboard("ВК", user_id, callback_codec, profile=profile)
-                await edit_panel_message(panel, text=text, reply_markup=reply_markup)
                 if profile is not None and getattr(profile, "telegram_user_id", None):
                     schedule_refresh_dialog_topic_profile(
                         message.bot,
@@ -248,22 +244,22 @@ def build_profile_router(container: AppContainer) -> Router:
                         topic_dialog_store=topic_dialog_store,
                         notification_settings_store=notification_settings_store,
                     )
-                existing_session = await fetch_user_session(container, platform, user_id)
+                existing_session = await container.session_repo.get(platform, message.from_user.id)
                 session = await container.profile_flow.ensure_session(
                     platform,
-                    user_id,
+                    message.from_user.id,
                     known_profile=profile,
                     existing_session=existing_session,
                 )
                 await container.profile_flow.persist_idle_menu_state(session)
-                if await container.admin_service.is_admin(user_id):
+                if await container.admin_service.is_admin(message.from_user.id):
                     await clear_admin_input_states(container, session)
             except Exception:
-                logger.exception("Failed to finalize profile menu for user_id=%s", user_id)
+                logger.exception("Failed to finalize profile menu for user_id=%s", message.from_user.id)
 
         asyncio.create_task(finalize_profile_menu())
 
-    @router.message(F.text.in_({"Заполнить профиль", "📝 Заполнить профиль"}))
+    @router.message(F.text == "Заполнить профиль")
     async def start_fill(message: Message) -> None:
         if not message.from_user:
             return
@@ -290,7 +286,7 @@ def build_profile_router(container: AppContainer) -> Router:
             return
         session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
         if session.state != DialogState.PROFILE_CONFIRM:
-            raise SkipHandler
+            return
 
         action_map = {
             "Да": "confirm_yes",
@@ -336,49 +332,43 @@ def build_profile_router(container: AppContainer) -> Router:
         if await _is_blocked_user(callback.from_user.id):
             await callback.answer("Доступ ограничен", show_alert=True)
             return
-
-        await callback.answer()
-
         if action in {"profile:buyout_orders", "profile:buyout_filters"}:
+            await callback.answer()
             loading = await callback.message.bot.send_message(
                 chat_id=callback.message.chat.id,
                 text=MY_ORDERS_LOADING_TEXT,
                 parse_mode="HTML",
             )
-            try:
-                profile = await container.profile_repo.get_by_platform_user(
-                    platform,
-                    callback.from_user.id,
-                )
-                session = await container.profile_flow.get_or_create_session(
-                    platform,
-                    callback.from_user.id,
-                    known_profile=profile,
-                )
-                await open_my_orders_panel(
-                    callback.message,
-                    session,
-                    container,
-                    container.buyout_flow,
-                    page=1,
-                    user_id=callback.from_user.id,
-                    build_reply_markup=_my_orders_reply_markup,
-                    replace_message=True,
-                    profile=profile,
-                    loading_message=loading,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to open my orders from profile for user_id=%s",
-                    callback.from_user.id,
-                )
+
+            async def open_orders_from_profile() -> None:
                 try:
-                    await edit_panel_message(
-                        loading,
-                        text="Не удалось загрузить заказы. Попробуйте ещё раз.",
+                    session = await container.profile_flow.get_or_create_session(
+                        platform,
+                        callback.from_user.id,
+                    )
+                    profile = await container.profile_repo.get_by_platform_user(
+                        platform,
+                        callback.from_user.id,
+                    )
+                    await open_my_orders_panel(
+                        callback.message,
+                        session,
+                        container,
+                        container.buyout_flow,
+                        page=1,
+                        user_id=callback.from_user.id,
+                        build_reply_markup=_my_orders_reply_markup,
+                        replace_message=True,
+                        profile=profile,
+                        loading_message=loading,
                     )
                 except Exception:
-                    pass
+                    logger.exception(
+                        "Failed to open my orders from profile for user_id=%s",
+                        callback.from_user.id,
+                    )
+
+            asyncio.create_task(open_orders_from_profile())
             return
         session = await container.profile_flow.get_or_create_session(platform, callback.from_user.id)
         if action == "profile:start_fill":
@@ -391,9 +381,11 @@ def build_profile_router(container: AppContainer) -> Router:
                     callback_codec,
                     profile=profile,
                 )
+                await callback.answer("Профиль уже заполнен.")
                 await _apply_response(callback.message, response, edit=True)
                 return
             response = await container.profile_flow.start_fill(session)
+            await callback.answer()
             await _apply_response(callback.message, response, edit=True)
             return
         if action == "profile:start_sync":
@@ -406,53 +398,59 @@ def build_profile_router(container: AppContainer) -> Router:
                     callback_codec,
                     profile=profile,
                 )
+                await callback.answer("Профиль уже заполнен.")
                 await _apply_response(callback.message, response, edit=True)
                 return
             response = await container.profile_flow.start_sync_with_other_platform(session)
+            await callback.answer()
             await _apply_response(callback.message, response, edit=True)
             return
         if action == "profile:buyout_start":
             response = await container.buyout_flow.start(session)
+            await callback.answer()
             await _apply_response(callback.message, response, edit=True)
             return
         if action == "profile:track:open":
             profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
             if not profile or not profile.is_filled:
-                await callback.message.answer("Сначала заполните профиль.")
+                await callback.answer("Сначала заполните профиль.", show_alert=True)
                 return
             response = await container.track_flow.show_mode_menu(session)
             response.reply_markup = track_mode_keyboard(callback.from_user.id, callback_codec)
+            await callback.answer()
             await _apply_response(callback.message, response, edit=True)
             return
         if action in {"profile:track:mode:numbers", "profile:track:mode:comments"}:
             profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
             if not profile or not profile.is_filled:
-                await callback.message.answer("Сначала заполните профиль.")
+                await callback.answer("Сначала заполните профиль.", show_alert=True)
                 return
             mode = "numbers" if action.endswith(":numbers") else "comments"
             response = await container.track_flow.start_mode(session, mode)
+            await callback.answer()
             await _apply_response(callback.message, response, edit=True)
             return
         if action == "profile:track:more":
             response = await container.track_flow.continue_input(session)
+            await callback.answer()
             await _apply_response(callback.message, response, edit=True)
             return
         if action == "profile:track:done":
             profile = await container.profile_repo.get_by_platform_user(platform, callback.from_user.id)
             if not profile or not profile.is_filled:
-                await callback.message.answer("Сначала заполните профиль.")
+                await callback.answer("Сначала заполните профиль.", show_alert=True)
                 return
             pending = list(session.state_data.get("track_pending") or [])
             if not pending:
-                await callback.message.answer("Нет трек-номеров для отправки.")
+                await callback.answer("Нет трек-номеров для отправки.", show_alert=True)
                 return
             try:
                 created = await container.track_flow.create_orders_from_tracks(profile, pending)
             except Exception:
-                await callback.message.answer("Не удалось сохранить заказы.")
+                await callback.answer("Не удалось сохранить заказы.", show_alert=True)
                 return
             if not created:
-                await callback.message.answer("Не распознаны трек-номера для сохранения.")
+                await callback.answer("Не распознаны трек-номера для сохранения.", show_alert=True)
                 return
             ok, note = await _post_user_tracks_to_group(
                 callback.message,
@@ -460,6 +458,7 @@ def build_profile_router(container: AppContainer) -> Router:
                 orders=created,
             )
             await container.track_flow.clear(session)
+            await callback.answer()
             if ok:
                 await callback.message.answer(f"{note} Заказы добавлены в «Мои заказы».")
             else:
@@ -470,13 +469,18 @@ def build_profile_router(container: AppContainer) -> Router:
         response = await container.profile_flow.handle_callback(session, action, callback_codec)
         if action in {"passport_yes", "passport_no"}:
             response.reply_markup = platforms_keyboard(callback.from_user.id, callback_codec)
+        await callback.answer()
         await _apply_response(callback.message, response, edit=True)
 
-    @router.message(_idle_media_filter, _not_buyout_media_filter, F.photo | F.video | F.animation | F.document)
+    @router.message(F.photo | F.video | F.animation | F.document)
     async def profile_idle_media_flow(message: Message) -> None:
         if not message.from_user:
             raise SkipHandler
         if message.chat.type != "private":
+            raise SkipHandler
+
+        session = await container.session_repo.get(platform, message.from_user.id)
+        if session and session.state in _BUYOUT_SKIP_STATES:
             raise SkipHandler
 
         if await _is_blocked_user(message.from_user.id):
@@ -485,17 +489,8 @@ def build_profile_router(container: AppContainer) -> Router:
 
         raise SkipHandler
 
-    @router.message(_profile_fsm_media_filter, F.photo | F.video | F.animation | F.document)
-    async def profile_fsm_media_reject(message: Message) -> None:
-        if not message.from_user or message.chat.type != "private":
-            raise SkipHandler
-        if await _is_blocked_user(message.from_user.id):
-            await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
-            return
-        await message.answer("Сейчас ожидается текст. Для отмены отправьте /отмена")
-
-    @router.message(_profile_input_state_filter, F.text)
-    async def profile_text_flow(message: Message, user_session=None) -> None:
+    @router.message(F.text)
+    async def profile_text_flow(message: Message) -> None:
         if not message.from_user or not message.text:
             raise SkipHandler
         if message.chat.type != "private":
@@ -507,18 +502,16 @@ def build_profile_router(container: AppContainer) -> Router:
         if message.text.startswith("/"):
             raise SkipHandler
 
+        session = await container.session_repo.get(platform, message.from_user.id)
+        if session and session.state in _BUYOUT_SKIP_STATES:
+            raise SkipHandler
+
         if await _is_blocked_user(message.from_user.id):
             await message.answer("Ваш доступ ограничен администратором. Обратитесь в поддержку.")
             return
 
-        session = await resolve_user_session(
-            handler_data(user_session),
-            container,
-            platform,
-            message.from_user.id,
-        )
         if session is None:
-            raise SkipHandler
+            session = await container.profile_flow.get_or_create_session(platform, message.from_user.id)
         if session.state in {DialogState.TRACK_WAIT_INPUT, DialogState.TRACK_WAIT_CONTINUE}:
             response = await container.track_flow.handle_text(session, message.text)
             response.reply_markup = _track_reply_markup(message.from_user.id, response.state)
@@ -533,6 +526,8 @@ def build_profile_router(container: AppContainer) -> Router:
         if not container.rate_limiter.validate_user_payload_size(len(message.text)):
             await message.answer("Сообщение слишком длинное.")
             return
+        if session.state == DialogState.IDLE:
+            raise SkipHandler
 
         response = await container.profile_flow.handle_text(session, message.text, callback_codec=callback_codec)
         await _apply_response(message, response)
