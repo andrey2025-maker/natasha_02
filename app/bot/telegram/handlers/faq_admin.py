@@ -7,6 +7,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from app.bot.telegram.callbacks import CallbackCodec
 from app.bot.telegram.callback_panel import edit_panel_message
+from app.bot.telegram.message_html import extract_message_html
 from app.core.container import AppContainer
 from app.services.admin_tools_service import FaqMediaStore
 
@@ -422,17 +423,18 @@ async def try_handle_faq_admin_text(
     faq_media_store: FaqMediaStore,
     utils_state: dict,
 ) -> bool:
-    if not message.from_user or not message.text:
+    if not message.from_user:
         return False
     screen = str(utils_state.get("faq_admin_screen") or "")
-    text = message.text.strip()
-    if not text:
-        await message.answer("Текст не может быть пустым.")
-        return True
-
     user_id = message.from_user.id
 
     if screen == SCREEN_ADD_TITLE:
+        if not message.text:
+            return False
+        text = message.text.strip()
+        if not text:
+            await message.answer("Текст не может быть пустым.")
+            return True
         parent_id = utils_state.get("faq_admin_nav_section_id")
         if parent_id is not None:
             parent_id = int(parent_id)
@@ -451,6 +453,12 @@ async def try_handle_faq_admin_text(
         return True
 
     if screen == SCREEN_RENAME_TITLE:
+        if not message.text:
+            return False
+        text = message.text.strip()
+        if not text:
+            await message.answer("Текст не может быть пустым.")
+            return True
         section_id = int(utils_state.get("faq_admin_target_section_id") or 0)
         updated = await container.faq_service.update_section_title(section_id, text)
         if not updated:
@@ -471,8 +479,14 @@ async def try_handle_faq_admin_text(
         return True
 
     if screen == SCREEN_EDIT_TEXT:
+        if not message.text:
+            return False
         section_id = int(utils_state.get("faq_admin_target_section_id") or 0)
-        updated = await container.faq_service.update_section_text(section_id, text)
+        html_text = extract_message_html(message)
+        if not html_text.strip():
+            await message.answer("Текст не может быть пустым.")
+            return True
+        updated = await container.faq_service.update_section_text(section_id, html_text)
         if not updated:
             await message.answer("Раздел не найден.")
             return True
@@ -643,7 +657,8 @@ async def _build_panel(
         text = (
             "📚 <b>Редактирование текста</b>\n\n"
             f"Раздел: <b>{escape(title, quote=False)}</b>\n\n"
-            "Отправьте новый текст раздела одним сообщением."
+            "Отправьте новый текст одним сообщением.\n"
+            "Поддерживается форматирование: <b>жирный</b>, <i>курсив</i>, ссылки и т.д."
         )
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[

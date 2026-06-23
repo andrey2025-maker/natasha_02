@@ -226,7 +226,7 @@ async def _send_section(
 
     body_lines = [f"<b>{escape(path_text, quote=False)}</b>"]
     if current and current.content_text:
-        body_lines.append(escape(current.content_text, quote=False))
+        body_lines.append(current.content_text.strip())
     if children:
         body_lines.append("")
         body_lines.append("Выберите раздел:")
@@ -274,13 +274,14 @@ async def _send_section(
     await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
-async def _send_static_content(message: Message, store: StaticContentStore) -> None:
+async def _send_static_content(message: Message, store) -> None:
     text = await store.get_text()
     media_items = await store.get_media_items()
     await send_content_with_media_to_telegram(
         message,
         text=text,
         media_items=media_items,
+        parse_mode="HTML",
     )
 
 
