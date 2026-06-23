@@ -71,6 +71,9 @@ async def open_faq_admin_panel(
     faq_media_store: FaqMediaStore,
     edit: bool = False,
 ) -> None:
+    from app.bot.telegram.handlers.content_utils_admin import reset_content_utils_state
+
+    reset_content_utils_state(utils_state)
     reset_faq_admin_state(utils_state)
     utils_state["faq_admin_screen"] = SCREEN_BROWSE
     utils_state["faq_admin_nav_section_id"] = None
@@ -479,13 +482,11 @@ async def try_handle_faq_admin_text(
         return True
 
     if screen == SCREEN_EDIT_TEXT:
-        if not message.text:
-            return False
-        section_id = int(utils_state.get("faq_admin_target_section_id") or 0)
         html_text = extract_message_html(message)
         if not html_text.strip():
             await message.answer("Текст не может быть пустым.")
             return True
+        section_id = int(utils_state.get("faq_admin_target_section_id") or 0)
         updated = await container.faq_service.update_section_text(section_id, html_text)
         if not updated:
             await message.answer("Раздел не найден.")

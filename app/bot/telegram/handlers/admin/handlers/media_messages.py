@@ -31,12 +31,9 @@ from app.bot.telegram.handlers.content_utils_admin import (
 from app.bot.telegram.handlers.faq_admin import (
     SCREEN_CONTENT,
     SCREEN_EDIT_MEDIA,
-    handle_faq_admin_callback,
-    open_faq_admin_panel,
     refresh_faq_admin_panel,
-    reset_faq_admin_state,
-    try_handle_faq_admin_text,
 )
+from app.bot.telegram.message_html import extract_caption_html
 from app.bot.telegram.handlers.questions_topic import ensure_dialog_topic_for_telegram_user
 from app.bot.telegram.keyboards.profile import main_menu_keyboard
 from app.core.container import AppContainer
@@ -127,7 +124,7 @@ def register_media_messages(router: Router, ctx: AdminContext) -> None:
                 await payment_store.save_media(
                     media_type=media_type,
                     file_id=file_id,
-                    caption=message.caption or "",
+                    caption=extract_caption_html(message),
                     vk_attachment=vk_attachment,
                     storage_chat_id=archive_chat_id,
                     storage_topic_id=archive_topic_id,
@@ -167,7 +164,7 @@ def register_media_messages(router: Router, ctx: AdminContext) -> None:
                 await delivery_store.save_media(
                     media_type=media_type,
                     file_id=file_id,
-                    caption=message.caption or "",
+                    caption=extract_caption_html(message),
                     vk_attachment=vk_attachment,
                     storage_chat_id=archive_chat_id,
                     storage_topic_id=archive_topic_id,
@@ -209,7 +206,7 @@ def register_media_messages(router: Router, ctx: AdminContext) -> None:
                     section_id=int(section_id),
                     media_type=media_type,
                     file_id=file_id,
-                    caption=message.caption or "",
+                    caption=extract_caption_html(message),
                     vk_attachment=vk_attachment,
                     storage_chat_id=archive_chat_id,
                     storage_topic_id=archive_topic_id,

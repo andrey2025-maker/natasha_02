@@ -138,6 +138,9 @@ async def open_content_utils_panel(
     prohibited_store: ProhibitedGoodsStore,
     contacts_store: StaticContentStore,
 ) -> None:
+    from app.bot.telegram.handlers.faq_admin import reset_faq_admin_state
+
+    reset_faq_admin_state(utils_state)
     reset_content_utils_state(utils_state)
     utils_state["content_utils_kind"] = kind
     utils_state["content_utils_screen"] = SCREEN_VIEW
@@ -431,7 +434,7 @@ async def try_handle_content_utils_text(
     group_topics_store: GroupTopicsStore | None = None,
     container: AppContainer | None = None,
 ) -> bool:
-    if not message.text or group_topics_store is None or container is None:
+    if not content_utils_has_waiter(utils_state) or group_topics_store is None or container is None:
         return False
     return await try_handle_content_utils_submission(
         message,

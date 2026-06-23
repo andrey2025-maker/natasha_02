@@ -28,20 +28,23 @@ from app.bot.telegram.handlers.admin.context import AdminContext
 from app.bot.telegram.handlers.content_utils_admin import (
     SCREEN_EDIT_MEDIA as CONTENT_UTILS_EDIT_MEDIA,
     SCREEN_EDIT_MENU as CONTENT_UTILS_EDIT_MENU,
+    content_utils_has_waiter,
     handle_content_utils_callback,
     refresh_content_utils_panel,
     reset_content_utils_state,
-    try_handle_content_utils_text,
+    try_handle_content_utils_submission,
 )
 from app.bot.telegram.handlers.faq_admin import (
     SCREEN_CONTENT,
     SCREEN_EDIT_MEDIA,
+    faq_admin_has_waiter,
     handle_faq_admin_callback,
     open_faq_admin_panel,
     refresh_faq_admin_panel,
     reset_faq_admin_state,
     try_handle_faq_admin_text,
 )
+from app.bot.telegram.message_html import extract_message_html
 from app.bot.telegram.handlers.questions_topic import ensure_dialog_topic_for_telegram_user
 from app.bot.telegram.keyboards.profile import main_menu_keyboard
 from app.core.container import AppContainer
@@ -147,20 +150,32 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
         edit_field = orders_state.get("edit_field")
         bulk_field = orders_state.get("bulk_field")
 
-        if await try_handle_content_utils_text(
-            message,
-            codec=callback_codec,
-            utils_state=utils_state,
-            prohibited_store=prohibited_store,
-            contacts_store=contacts_store,
-            group_topics_store=group_topics_store,
-            container=container,
-        ):
-            await _save_admin_utils_state(container, session, utils_state)
-            return
+        if faq_admin_has_waiter(utils_state):
+            if await try_handle_faq_admin_text(
+                message,
+                container=container,
+                codec=callback_codec,
+                faq_media_store=faq_media_store,
+                utils_state=utils_state,
+            ):
+                await _save_admin_utils_state(container, session, utils_state)
+                return
+
+        if content_utils_has_waiter(utils_state):
+            if await try_handle_content_utils_submission(
+                message,
+                codec=callback_codec,
+                utils_state=utils_state,
+                prohibited_store=prohibited_store,
+                contacts_store=contacts_store,
+                group_topics_store=group_topics_store,
+                container=container,
+            ):
+                await _save_admin_utils_state(container, session, utils_state)
+                return
 
         if utils_state.get("awaiting_payment_text"):
-            new_text = message.text.strip()
+            new_text = extract_message_html(message)
             if not new_text:
                 await message.answer("Текст не может быть пустым.")
                 return
@@ -186,7 +201,7 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
             return
 
         if utils_state.get("awaiting_delivery_text"):
-            new_text = message.text.strip()
+            new_text = extract_message_html(message)
             if not new_text:
                 await message.answer("Текст не может быть пустым.")
                 return
@@ -214,16 +229,6 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
                     "Сейчас ожидается медиа. Отправьте фото, видео или GIF, "
                     "либо нажмите «Готово медиа» в сообщении выше."
                 )
-            return
-
-        if await try_handle_faq_admin_text(
-            message,
-            container=container,
-            codec=callback_codec,
-            faq_media_store=faq_media_store,
-            utils_state=utils_state,
-        ):
-            await _save_admin_utils_state(container, session, utils_state)
             return
 
         if utils_state.get("awaiting_codes_add"):

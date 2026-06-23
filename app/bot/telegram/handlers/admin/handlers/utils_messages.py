@@ -316,6 +316,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
             f"{_media_items_summary(media_items)}\n\n"
             "Команды: «Ред. оплата текст», «Ред. оплата медиа», «Очистить медиа оплаты».\n"
             "Удаление одного файла: «Удалить медиа &lt;номер&gt;».",
+            parse_mode="HTML",
         )
         for media in media_items:
             await send_stored_media_to_telegram(message.bot, message.chat.id, media)
@@ -387,6 +388,7 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
             f"{_media_items_summary(media_items)}\n\n"
             "Команды: «Ред. доставка текст», «Ред. доставка медиа», «Очистить медиа доставка».\n"
             "Удаление одного файла: «Удалить медиа &lt;номер&gt;».",
+            parse_mode="HTML",
         )
         for media in media_items:
             await send_stored_media_to_telegram(message.bot, message.chat.id, media)
