@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+from aiogram.types import InlineKeyboardButton
+
 from app.domain.enums import OrderStatus
+
+try:
+    from aiogram.enums import ButtonStyle as _ButtonStyle
+except ImportError:  # aiogram < 3.27
+    _ButtonStyle = None
 
 ORDER_FILTER_STATUSES: tuple[OrderStatus, ...] = (
     OrderStatus.PENDING,
@@ -47,8 +54,27 @@ def order_filter_title(status: OrderStatus) -> str:
     return ORDER_FILTER_TITLES.get(status, status.value)
 
 
-def order_filter_button_text(status: OrderStatus, *, enabled: bool) -> str:
-    indicator = "🟢" if enabled else "🔴"
+def order_filter_button_text(status: OrderStatus) -> str:
     emoji = ORDER_FILTER_EMOJI.get(status, "•")
     title = order_filter_title(status)
-    return f"{indicator} {emoji} {title}"
+    return f"{emoji} {title}"
+
+
+def order_filter_button_style(*, enabled: bool) -> str:
+    value = "success" if enabled else "danger"
+    if _ButtonStyle is not None:
+        return _ButtonStyle.SUCCESS if enabled else _ButtonStyle.DANGER
+    return value
+
+
+def build_order_filter_button(
+    status: OrderStatus,
+    *,
+    enabled: bool,
+    callback_data: str,
+) -> InlineKeyboardButton:
+    return InlineKeyboardButton(
+        text=order_filter_button_text(status),
+        callback_data=callback_data,
+        style=order_filter_button_style(enabled=enabled),
+    )

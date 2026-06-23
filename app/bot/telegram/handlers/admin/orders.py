@@ -14,7 +14,12 @@ from app.core.container import AppContainer
 from app.domain.enums import OrderStatus, Platform
 from app.domain.models import BuyoutOrder, OrderStatusHistoryItem, OutboundMessage
 from app.services.admin_tools_service import PaymentTextStore, send_stored_media_to_telegram
-from app.services.order_filter_config import DEFAULT_ORDER_FILTER_VALUES, ORDER_FILTER_BUTTONS_PER_ROW, ORDER_FILTER_STATUSES, order_filter_button_text
+from app.services.order_filter_config import (
+    DEFAULT_ORDER_FILTER_VALUES,
+    ORDER_FILTER_BUTTONS_PER_ROW,
+    ORDER_FILTER_STATUSES,
+    build_order_filter_button,
+)
 from app.services.order_list_format import assemble_orders_panel_text, format_order_blockquote, order_status_title
 from app.services.order_media_utils import collect_order_media_dicts
 
@@ -399,8 +404,9 @@ def _admin_orders_filter_rows(
     for status in _ADMIN_ORDER_FILTER_STATUSES:
         is_enabled = filters.get(status, True)
         row.append(
-            InlineKeyboardButton(
-                text=order_filter_button_text(status, enabled=is_enabled),
+            build_order_filter_button(
+                status,
+                enabled=is_enabled,
                 callback_data=codec.encode(f"admin:orders:filter:{status.value}", user_id),
             )
         )

@@ -10,7 +10,7 @@ from app.bot.telegram.callbacks import CallbackCodec
 from app.services.order_filter_config import (
     ORDER_FILTER_BUTTONS_PER_ROW,
     ORDER_FILTER_STATUSES,
-    order_filter_button_text,
+    build_order_filter_button,
     order_filter_title,
 )
 
@@ -201,8 +201,9 @@ def _my_orders_filters_rows(
     for status in ORDER_FILTER_STATUSES:
         is_enabled = filters.get(status, True)
         row.append(
-            InlineKeyboardButton(
-                text=order_filter_button_text(status, enabled=is_enabled),
+            build_order_filter_button(
+                status,
+                enabled=is_enabled,
                 callback_data=codec.encode(f"orders_filter:{status.value}", user_id),
             )
         )
