@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from html import escape
 
-from app.domain.models import UserProfile
+from app.domain.models import DEFAULT_PROFILE_PRICE_PER_KG_RUB, UserProfile
 
 
 def welcome_text() -> str:
@@ -25,13 +25,18 @@ def profile_intro() -> str:
 
 
 def profile_summary(profile: UserProfile) -> str:
-    return (
-        "🪪 <b>Ваш профиль</b>\n\n"
+    price = profile.price_per_kg_rub or DEFAULT_PROFILE_PRICE_PER_KG_RUB
+    details = (
         f"👤 <b>Имя:</b> {_h(profile.name)}\n"
         f"🔢 <b>Код:</b> {_h(profile.code)}\n"
         f"📞 <b>Тел:</b> {_h(profile.phone)}\n"
         f"🏙 <b>Город:</b> {_h(profile.city)}\n"
         f"🛂 <b>Загран паспорт:</b> {'Да' if profile.has_passport else 'Нет'}"
+    )
+    return (
+        "🪪 <b>Ваш профиль</b>\n"
+        f"<b>Стоимость:</b> {price} RUB за 1 кг\n\n"
+        f"<blockquote>{details}</blockquote>"
     )
 
 

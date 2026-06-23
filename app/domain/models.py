@@ -13,6 +13,8 @@ from app.domain.enums import (
     SyncState,
 )
 
+DEFAULT_PROFILE_PRICE_PER_KG_RUB = 560
+
 
 @dataclass(slots=True)
 class UserProfile:
@@ -22,6 +24,7 @@ class UserProfile:
     phone: str
     city: str
     has_passport: bool
+    price_per_kg_rub: int = DEFAULT_PROFILE_PRICE_PER_KG_RUB
     telegram_user_id: Optional[int] = None
     vk_user_id: Optional[int] = None
     is_blocked_by_admin: bool = False

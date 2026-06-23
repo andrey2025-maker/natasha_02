@@ -40,14 +40,15 @@ ORDER_FILTER_TITLES: dict[OrderStatus, str] = {
 
 DEFAULT_ORDER_FILTER_VALUES: list[str] = [status.value for status in ORDER_FILTER_STATUSES]
 
+ORDER_FILTER_BUTTONS_PER_ROW = 2
+
 
 def order_filter_title(status: OrderStatus) -> str:
     return ORDER_FILTER_TITLES.get(status, status.value)
 
 
 def order_filter_button_text(status: OrderStatus, *, enabled: bool) -> str:
+    indicator = "🟢" if enabled else "🔴"
     emoji = ORDER_FILTER_EMOJI.get(status, "•")
     title = order_filter_title(status)
-    if enabled:
-        return f"{emoji} {title}"
-    return f"🔴 {emoji} {title}"
+    return f"{indicator} {emoji} {title}"

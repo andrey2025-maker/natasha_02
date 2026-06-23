@@ -18,6 +18,7 @@ def _row_to_profile(row: asyncpg.Record) -> UserProfile:
         phone=row["phone"],
         city=row["city"],
         has_passport=row["has_passport"],
+        price_per_kg_rub=int(row["price_per_kg_rub"]),
         telegram_user_id=row["telegram_user_id"],
         vk_user_id=row["vk_user_id"],
         is_blocked_by_admin=row["is_blocked_by_admin"],
@@ -55,9 +56,10 @@ class PostgresUserProfileRepository(UserProfileRepository):
                     """
                     UPDATE user_profiles
                     SET code = $2, name = $3, phone = $4, city = $5, has_passport = $6,
-                        telegram_user_id = $7, vk_user_id = $8,
-                        is_blocked_by_admin = $9, blocked_bot = $10,
-                        last_activity_at = $11
+                        price_per_kg_rub = $7,
+                        telegram_user_id = $8, vk_user_id = $9,
+                        is_blocked_by_admin = $10, blocked_bot = $11,
+                        last_activity_at = $12
                     WHERE id = $1
                     RETURNING *
                     """,
@@ -67,6 +69,7 @@ class PostgresUserProfileRepository(UserProfileRepository):
                     profile.phone,
                     profile.city,
                     profile.has_passport,
+                    profile.price_per_kg_rub,
                     profile.telegram_user_id,
                     profile.vk_user_id,
                     profile.is_blocked_by_admin,
@@ -77,12 +80,12 @@ class PostgresUserProfileRepository(UserProfileRepository):
                 row = await conn.fetchrow(
                     """
                     INSERT INTO user_profiles (
-                        code, name, phone, city, has_passport,
+                        code, name, phone, city, has_passport, price_per_kg_rub,
                         telegram_user_id, vk_user_id,
                         is_blocked_by_admin, blocked_bot,
                         created_at, last_activity_at
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                     RETURNING *
                     """,
                     profile.code,
@@ -90,6 +93,7 @@ class PostgresUserProfileRepository(UserProfileRepository):
                     profile.phone,
                     profile.city,
                     profile.has_passport,
+                    profile.price_per_kg_rub,
                     profile.telegram_user_id,
                     profile.vk_user_id,
                     profile.is_blocked_by_admin,

@@ -287,6 +287,18 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
                     return
                 await container.profile_repo.save(profile)
                 answer_text = "Поле «Загран паспорт» обновлено."
+            elif profile_edit_field == "price_per_kg":
+                try:
+                    price = int(value.replace(" ", "").replace("₽", "").replace("rub", "").replace("RUB", ""))
+                except ValueError:
+                    await message.answer("Введите целое число рублей. Пример: 560")
+                    return
+                if price <= 0:
+                    await message.answer("Стоимость должна быть больше нуля.")
+                    return
+                profile.price_per_kg_rub = price
+                await container.profile_repo.save(profile)
+                answer_text = f"Стоимость обновлена: {price} RUB за 1 кг."
             elif profile_edit_field == "comment":
                 if value == "-":
                     await profile_comment_store.set_comment(profile_edit_code, "")

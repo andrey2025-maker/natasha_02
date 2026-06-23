@@ -8,6 +8,7 @@ from app.domain.models import UserProfile
 
 from app.bot.telegram.callbacks import CallbackCodec
 from app.services.order_filter_config import (
+    ORDER_FILTER_BUTTONS_PER_ROW,
     ORDER_FILTER_STATUSES,
     order_filter_button_text,
     order_filter_title,
@@ -205,7 +206,7 @@ def _my_orders_filters_rows(
                 callback_data=codec.encode(f"orders_filter:{status.value}", user_id),
             )
         )
-        if len(row) == 3:
+        if len(row) == ORDER_FILTER_BUTTONS_PER_ROW:
             rows.append(row)
             row = []
     if row:

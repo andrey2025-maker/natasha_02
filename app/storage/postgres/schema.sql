@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     phone           TEXT NOT NULL DEFAULT '',
     city            TEXT NOT NULL DEFAULT '',
     has_passport    BOOLEAN NOT NULL DEFAULT FALSE,
+    price_per_kg_rub INTEGER NOT NULL DEFAULT 560,
     telegram_user_id BIGINT UNIQUE,
     vk_user_id      BIGINT UNIQUE,
     is_blocked_by_admin BOOLEAN NOT NULL DEFAULT FALSE,

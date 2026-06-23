@@ -14,7 +14,7 @@ from app.core.container import AppContainer
 from app.domain.enums import OrderStatus, Platform
 from app.domain.models import BuyoutOrder, OrderStatusHistoryItem, OutboundMessage
 from app.services.admin_tools_service import PaymentTextStore, send_stored_media_to_telegram
-from app.services.order_filter_config import DEFAULT_ORDER_FILTER_VALUES, ORDER_FILTER_STATUSES, order_filter_button_text
+from app.services.order_filter_config import DEFAULT_ORDER_FILTER_VALUES, ORDER_FILTER_BUTTONS_PER_ROW, ORDER_FILTER_STATUSES, order_filter_button_text
 from app.services.order_list_format import assemble_orders_panel_text, format_order_blockquote, order_status_title
 from app.services.order_media_utils import collect_order_media_dicts
 
@@ -404,7 +404,7 @@ def _admin_orders_filter_rows(
                 callback_data=codec.encode(f"admin:orders:filter:{status.value}", user_id),
             )
         )
-        if len(row) == 3:
+        if len(row) == ORDER_FILTER_BUTTONS_PER_ROW:
             rows.append(row)
             row = []
     if row:

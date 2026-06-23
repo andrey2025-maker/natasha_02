@@ -8,7 +8,7 @@ from app.bot.telegram.handlers.admin.orders import _notify_order_status_change, 
 from app.core.container import AppContainer
 from app.domain.enums import OrderStatus, Platform
 from app.services.admin_tools_service import PaymentTextStore
-from app.services.order_filter_config import ORDER_FILTER_EMOJI, ORDER_FILTER_STATUSES
+from app.services.order_filter_config import ORDER_FILTER_BUTTONS_PER_ROW, ORDER_FILTER_EMOJI, ORDER_FILTER_STATUSES
 from app.services.track_match_utils import match_uploaded_tracks, parse_txt_track_lines
 
 _TRACK_STATUS_LABELS: dict[OrderStatus, str] = {
@@ -167,8 +167,8 @@ def _tracks_back_keyboard(user_id: int, codec: CallbackCodec) -> InlineKeyboardM
 def _tracks_status_keyboard(user_id: int, codec: CallbackCodec) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     statuses = list(ORDER_FILTER_STATUSES)
-    for index in range(0, len(statuses), 3):
-        chunk = statuses[index : index + 3]
+    for index in range(0, len(statuses), ORDER_FILTER_BUTTONS_PER_ROW):
+        chunk = statuses[index : index + ORDER_FILTER_BUTTONS_PER_ROW]
         rows.append(
             [
                 InlineKeyboardButton(

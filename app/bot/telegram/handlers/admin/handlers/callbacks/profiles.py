@@ -242,7 +242,7 @@ def register_profiles_callbacks(router: Router, ctx: AdminContext) -> None:
                 return
             code = parts[3]
             field = parts[4]
-            if field not in {"name", "phone", "city", "passport", "comment", "code"}:
+            if field not in {"name", "phone", "city", "passport", "comment", "code", "price_per_kg"}:
                 await callback.answer("Неизвестное поле", show_alert=True)
                 return
             profile = await container.admin_service.get_profile(code)
@@ -262,11 +262,14 @@ def register_profiles_callbacks(router: Router, ctx: AdminContext) -> None:
                 "passport": "Загран паспорт",
                 "comment": "Комментарий",
                 "code": "Код",
+                "price_per_kg": "Стоимость за 1 кг",
             }[field]
             if field == "passport":
                 hint = "Введите Да/Нет."
             elif field == "code":
                 hint = "Отправьте новый числовой код. Пример: 016"
+            elif field == "price_per_kg":
+                hint = "Отправьте стоимость в рублях за 1 кг. Пример: 560"
             else:
                 hint = "Отправьте новое значение."
             await callback.answer()

@@ -342,6 +342,7 @@ def _profile_list_item_text(profile: UserProfile) -> str:
         f"👤 Имя: {name_value}\n"
         f"📞 Тел: {_h(profile.phone or 'Нет')}\n"
         f"🏙 Город: {_h(profile.city or 'Нет')}\n"
+        f"💰 Стоимость: {_h(profile.price_per_kg_rub)} RUB за 1 кг\n"
         f"🌍 Загран Паспорт: {'Да' if profile.has_passport else 'Нет'}\n"
         f"💬 Комментарий: —\n"
         f"🆔 ID: {_h(profile.telegram_user_id or 'Нет')}\n"
@@ -395,6 +396,12 @@ def _profile_actions_keyboard(profile: UserProfile, user_id: int, codec: Callbac
                 callback_data=codec.encode(f"admin:profile:edit_field:{profile.code}:passport", user_id),
             ),
             InlineKeyboardButton(
+                text="💰 Стоимость",
+                callback_data=codec.encode(f"admin:profile:edit_field:{profile.code}:price_per_kg", user_id),
+            ),
+        ],
+        [
+            InlineKeyboardButton(
                 text="💬 Коммент",
                 callback_data=codec.encode(f"admin:profile:edit_field:{profile.code}:comment", user_id),
             ),
@@ -429,6 +436,10 @@ def _profile_edit_fields_keyboard(profile_code: str, user_id: int, codec: Callba
                 InlineKeyboardButton(
                     text="Загран паспорт",
                     callback_data=codec.encode(f"admin:profile:edit_field:{profile_code}:passport", user_id),
+                ),
+                InlineKeyboardButton(
+                    text="Стоимость",
+                    callback_data=codec.encode(f"admin:profile:edit_field:{profile_code}:price_per_kg", user_id),
                 ),
             ],
             [
@@ -490,6 +501,7 @@ def _profile_details(
         f"👤 Имя: {name_value}\n"
         f"📞 Тел: {_h(profile.phone or 'Нет')}\n"
         f"🏙 Город: {_h(profile.city or 'Нет')}\n"
+        f"💰 Стоимость: {_h(profile.price_per_kg_rub)} RUB за 1 кг\n"
         f"🌍 Загран Паспорт: {'Да' if profile.has_passport else 'Нет'}\n"
         f"💬 Комментарий: {_h(comment_line)}\n"
         f"🆔 ID: {_h(profile.telegram_user_id or 'Нет')}\n"
