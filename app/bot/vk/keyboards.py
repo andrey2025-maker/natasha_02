@@ -7,6 +7,8 @@ from app.domain.enums import OrderStatus
 
 from app.domain.models import UserProfile
 
+from app.bot.telegram.keyboards.main_menu import PROFILE_VK_SYNC_VISIBLE
+
 
 def start_keyboard() -> str:
     return _keyboard(
@@ -23,7 +25,10 @@ def start_keyboard() -> str:
 def profile_menu_keyboard(profile: UserProfile | None = None) -> str:
     rows: list[list[str]] = []
     if not (profile and profile.is_filled):
-        rows.append(["Заполнить профиль", "Есть профиль ТГ"])
+        if PROFILE_VK_SYNC_VISIBLE:
+            rows.append(["Заполнить профиль", "Есть профиль ТГ"])
+        else:
+            rows.append(["Заполнить профиль"])
     rows.extend(
         [
             ["Заказ выкупа", "Мои заказы"],

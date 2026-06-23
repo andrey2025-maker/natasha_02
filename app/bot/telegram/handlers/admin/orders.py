@@ -200,101 +200,9 @@ def _admin_orders_panel_header(
     return header_parts
 
 
-async def _present_admin_orders_panel_fast(
-    message: Message,
-    state: dict,
-    *,
-    text: str,
-    reply_markup,
-    replace_message: bool,
-) -> Message:
-    await clear_admin_orders_extra_media(message.bot, message.chat.id, state)
-    state["extra_media_message_ids"] = []
-    if replace_message:
-        try:
-            await message.delete()
-        except Exception:
-            pass
-    return await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
-
-
 def _orders_panel_version_matches(session, panel_version: int) -> bool:
     current = _get_admin_orders_state(session)
     return int(current.get("orders_panel_version", 0)) == panel_version
-
-
-async def _enrich_admin_orders_panel(
-    panel_message: Message,
-    *,
-    container: AppContainer,
-    codec: CallbackCodec,
-    user_id: int,
-    state: dict,
-    session,
-    orders: list[BuyoutOrder],
-    total: int,
-    total_pages: int,
-    profile_cache: dict[int, object | None],
-    panel_version: int,
-) -> None:
-    try:
-        histories, order_media_groups = await asyncio.gather(
-            _load_order_histories_map(container, orders),
-            _load_order_media_groups(container, orders),
-        )
-        if not _orders_panel_version_matches(session, panel_version):
-            return
-
-        page = int(state.get("page", 1))
-        selected = set(state.get("selected", []))
-        header_parts = _admin_orders_panel_header(
-            state,
-            total=total,
-            total_pages=total_pages,
-            orders_count=0,
-        )
-        order_blocks = _build_admin_order_blocks(orders, selected, profile_cache, histories)
-        keyboard = _orders_keyboard(
-            user_id,
-            codec,
-            page,
-            total_pages,
-            orders,
-            selected,
-            filter_states=_admin_orders_filter_states(state),
-            search_active=isinstance(state.get("search_results"), list) and bool(state.get("search_results")),
-        )
-        text = assemble_orders_panel_text(
-            header_parts,
-            order_blocks,
-            for_media_caption=bool(order_media_groups),
-        )
-        if order_media_groups:
-            extra_ids = await present_admin_orders_panel(
-                panel_message,
-                state,
-                text=text,
-                order_media_groups=order_media_groups,
-                reply_markup=keyboard,
-                replace_message=True,
-            )
-        else:
-            await edit_panel_message(panel_message, text=text, reply_markup=keyboard)
-            extra_ids = []
-
-        if not _orders_panel_version_matches(session, panel_version):
-            return
-
-        payload = dict(session.state_data)
-        block = dict(payload.get("_admin_orders") or {})
-        if int(block.get("orders_panel_version", 0)) != panel_version:
-            return
-        block["extra_media_message_ids"] = list(extra_ids)
-        payload["_admin_orders"] = block
-        session.state_data = payload
-        await container.session_repo.save(session)
-    except Exception:
-        logger.exception("Failed to enrich admin orders panel")
 
 
 async def _send_orders_panel(
@@ -315,20 +223,78 @@ async def _send_orders_panel(
     state["orders_panel_version"] = int(state.get("orders_panel_version", 0)) + 1
     panel_version = int(state["orders_panel_version"])
 
+    await clear_admin_orders_extra_media(message.bot, message.chat.id, state)
+    state["extra_media_message_ids"] = []
+
+    bot = message.bot
+    chat_id = message.chat.id
+    panel_message: Message | None = None
+    extra_ids: list[int] = []
+
+    if not orders:
+        header_parts = _admin_orders_panel_header(
+            state,
+            total=total,
+            total_pages=total_pages,
+            orders_count=0,
+        )
+        text = assemble_orders_panel_text(header_parts, [], empty_text="Заказов пока нет.")
+        keyboard = _orders_keyboard(
+            user_id,
+            codec,
+            page,
+            total_pages,
+            orders,
+            selected,
+            filter_states=_admin_orders_filter_states(state),
+            search_active=search_active,
+        )
+        if edit:
+            try:
+                await edit_panel_message(message, text=text, reply_markup=keyboard)
+            except Exception:
+                await bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=keyboard)
+        else:
+            await bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=keyboard)
+        await _save_admin_orders_state(container, session, state)
+        return
+
+    loading_header = _admin_orders_panel_header(
+        state,
+        total=total,
+        total_pages=total_pages,
+        orders_count=1,
+    )
+    loading_text = assemble_orders_panel_text(loading_header, [], empty_text="Загрузка…")
+    if edit:
+        try:
+            await edit_panel_message(message, text=loading_text, reply_markup=None)
+            panel_message = message
+        except Exception:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            panel_message = await bot.send_message(chat_id, loading_text, parse_mode="HTML")
+    else:
+        panel_message = await bot.send_message(chat_id, loading_text, parse_mode="HTML")
+
+    profile_cache = await _load_profiles_for_orders(container, orders)
+    histories, order_media_groups = await asyncio.gather(
+        _load_order_histories_map(container, orders),
+        _load_order_media_groups(container, orders),
+    )
+
+    if not _orders_panel_version_matches(session, panel_version):
+        return
+
     header_parts = _admin_orders_panel_header(
         state,
         total=total,
         total_pages=total_pages,
-        orders_count=len(orders),
+        orders_count=0,
     )
-
-    order_blocks: list[str] = []
-    if not orders:
-        order_blocks.append("Заказов пока нет.")
-    else:
-        profile_cache = await _load_profiles_for_orders(container, orders)
-        order_blocks = _build_admin_order_blocks(orders, selected, profile_cache, histories=None)
-
+    order_blocks = _build_admin_order_blocks(orders, selected, profile_cache, histories)
     keyboard = _orders_keyboard(
         user_id,
         codec,
@@ -339,36 +305,30 @@ async def _send_orders_panel(
         filter_states=_admin_orders_filter_states(state),
         search_active=search_active,
     )
-    text = assemble_orders_panel_text(
-        header_parts,
-        order_blocks,
-        for_media_caption=False,
-    )
-    panel_message = await _present_admin_orders_panel_fast(
-        message,
-        state,
-        text=text,
-        reply_markup=keyboard,
-        replace_message=edit,
-    )
-    await _save_admin_orders_state(container, session, state)
+    text = assemble_orders_panel_text(header_parts, order_blocks, for_media_caption=False)
 
-    if orders:
-        asyncio.create_task(
-            _enrich_admin_orders_panel(
-                panel_message,
-                container=container,
-                codec=codec,
-                user_id=user_id,
-                state=state,
-                session=session,
-                orders=orders,
-                total=total,
-                total_pages=total_pages,
-                profile_cache=profile_cache,
-                panel_version=panel_version,
-            )
+    if order_media_groups:
+        if panel_message is not None:
+            try:
+                await panel_message.delete()
+            except Exception:
+                pass
+        extra_ids = await present_admin_orders_panel(
+            message,
+            state,
+            text=text,
+            order_media_groups=order_media_groups,
+            reply_markup=keyboard,
+            replace_message=False,
         )
+    elif panel_message is not None:
+        await edit_panel_message(panel_message, text=text, reply_markup=keyboard)
+
+    if not _orders_panel_version_matches(session, panel_version):
+        return
+
+    state["extra_media_message_ids"] = list(extra_ids)
+    await _save_admin_orders_state(container, session, state)
 
 
 def _append_order_toggle_rows(

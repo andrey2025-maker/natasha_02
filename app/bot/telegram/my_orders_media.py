@@ -138,32 +138,35 @@ async def _deliver_orders_panel(
     reply_markup,
     replace_message: bool,
 ) -> list[int]:
-    """Admin orders panel: caption + media on one message."""
+    """Admin orders panel: media above, full text + keyboard below."""
+    bot = message.bot
+    chat_id = message.chat.id
+
     if replace_message:
         try:
             await message.delete()
         except Exception:
             pass
 
-    if not media_items:
-        await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
-        return []
+    extra_ids: list[int] = []
+    if media_items:
+        ids = await send_stored_media_group_to_telegram(
+            bot,
+            chat_id,
+            media_items,
+            caption=None,
+            parse_mode=None,
+            reply_markup=None,
+        )
+        extra_ids = list(ids) if ids else []
 
-    bot = message.bot
-    chat_id = message.chat.id
-    caption = clip_html_caption(text)
-    all_ids = await send_stored_media_group_to_telegram(
-        bot,
-        chat_id,
-        media_items,
-        caption=caption,
+    await bot.send_message(
+        chat_id=chat_id,
+        text=text,
         parse_mode="HTML",
         reply_markup=reply_markup,
     )
-    if not all_ids:
-        await message.answer(text, parse_mode="HTML", reply_markup=reply_markup)
-        return []
-    return all_ids[1:]
+    return extra_ids
 
 
 async def open_my_orders_panel(

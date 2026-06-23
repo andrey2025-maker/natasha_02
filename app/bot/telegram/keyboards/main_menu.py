@@ -14,6 +14,12 @@ from app.services.order_filter_config import (
     order_filter_title,
 )
 
+# Временно скрыта в UI; обработчики profile:track:* остаются активными.
+PROFILE_TRACK_BUTTON_VISIBLE = False
+
+# Временно скрыта привязка TG↔ВК; обработчики profile:start_sync остаются активными.
+PROFILE_VK_SYNC_VISIBLE = False
+
 
 def main_menu_keyboard(include_admin: bool = False) -> ReplyKeyboardMarkup:
     rows = [
@@ -32,7 +38,7 @@ def profile_menu_keyboard(
     profile: UserProfile | None = None,
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    if profile and profile.is_filled:
+    if PROFILE_TRACK_BUTTON_VISIBLE and profile and profile.is_filled:
         rows.append(
             [InlineKeyboardButton(text="📦 Трек номер", callback_data=codec.encode("profile:track:open", user_id))]
         )
@@ -40,14 +46,15 @@ def profile_menu_keyboard(
         rows.append(
             [InlineKeyboardButton(text="📝 Заполнить профиль", callback_data=codec.encode("profile:start_fill", user_id))]
         )
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"🔗 Есть профиль {other_platform_label}",
-                    callback_data=codec.encode("profile:start_sync", user_id),
-                )
-            ]
-        )
+        if PROFILE_VK_SYNC_VISIBLE:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"🔗 Есть профиль {other_platform_label}",
+                        callback_data=codec.encode("profile:start_sync", user_id),
+                    )
+                ]
+            )
     rows.extend(
         [
             [InlineKeyboardButton(text="🛍 Заказ выкупа", callback_data=codec.encode("profile:buyout_start", user_id))],
