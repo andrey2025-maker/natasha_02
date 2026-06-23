@@ -200,11 +200,6 @@ def _admin_orders_panel_header(
     return header_parts
 
 
-def _orders_panel_version_matches(session, panel_version: int) -> bool:
-    current = _get_admin_orders_state(session)
-    return int(current.get("orders_panel_version", 0)) == panel_version
-
-
 async def _send_orders_panel(
     message: Message,
     container: AppContainer,
@@ -221,10 +216,9 @@ async def _send_orders_panel(
     search_active = isinstance(state.get("search_results"), list) and bool(state.get("search_results"))
 
     state["orders_panel_version"] = int(state.get("orders_panel_version", 0)) + 1
-    panel_version = int(state["orders_panel_version"])
-
     await clear_admin_orders_extra_media(message.bot, message.chat.id, state)
     state["extra_media_message_ids"] = []
+    await _save_admin_orders_state(container, session, state)
 
     bot = message.bot
     chat_id = message.chat.id
@@ -256,7 +250,6 @@ async def _send_orders_panel(
                 await bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=keyboard)
         else:
             await bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=keyboard)
-        await _save_admin_orders_state(container, session, state)
         return
 
     loading_header = _admin_orders_panel_header(
@@ -279,14 +272,17 @@ async def _send_orders_panel(
     else:
         panel_message = await bot.send_message(chat_id, loading_text, parse_mode="HTML")
 
-    profile_cache = await _load_profiles_for_orders(container, orders)
-    histories, order_media_groups = await asyncio.gather(
-        _load_order_histories_map(container, orders),
-        _load_order_media_groups(container, orders),
-    )
-
-    if not _orders_panel_version_matches(session, panel_version):
-        return
+    try:
+        profile_cache = await _load_profiles_for_orders(container, orders)
+        histories, order_media_groups = await asyncio.gather(
+            _load_order_histories_map(container, orders),
+            _load_order_media_groups(container, orders),
+        )
+    except Exception:
+        logger.exception("Failed to load admin orders panel data")
+        histories = {}
+        order_media_groups = []
+        profile_cache = await _load_profiles_for_orders(container, orders)
 
     header_parts = _admin_orders_panel_header(
         state,
@@ -307,25 +303,32 @@ async def _send_orders_panel(
     )
     text = assemble_orders_panel_text(header_parts, order_blocks, for_media_caption=False)
 
-    if order_media_groups:
+    try:
+        if order_media_groups:
+            if panel_message is not None:
+                try:
+                    await panel_message.delete()
+                except Exception:
+                    pass
+            extra_ids = await present_admin_orders_panel(
+                message,
+                state,
+                text=text,
+                order_media_groups=order_media_groups,
+                reply_markup=keyboard,
+                replace_message=False,
+            )
+        elif panel_message is not None:
+            await edit_panel_message(panel_message, text=text, reply_markup=keyboard)
+    except Exception:
+        logger.exception("Failed to present admin orders panel")
         if panel_message is not None:
             try:
-                await panel_message.delete()
+                await edit_panel_message(panel_message, text=text, reply_markup=keyboard)
             except Exception:
-                pass
-        extra_ids = await present_admin_orders_panel(
-            message,
-            state,
-            text=text,
-            order_media_groups=order_media_groups,
-            reply_markup=keyboard,
-            replace_message=False,
-        )
-    elif panel_message is not None:
-        await edit_panel_message(panel_message, text=text, reply_markup=keyboard)
-
-    if not _orders_panel_version_matches(session, panel_version):
-        return
+                await bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=keyboard)
+        else:
+            await bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=keyboard)
 
     state["extra_media_message_ids"] = list(extra_ids)
     await _save_admin_orders_state(container, session, state)
