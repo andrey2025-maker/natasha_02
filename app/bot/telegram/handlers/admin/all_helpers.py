@@ -3,6 +3,7 @@ from app.bot.telegram.handlers.admin.broadcast import (
     _broadcast_keyboard,
     _dispatch_broadcast_media,
     _dispatch_broadcast_text,
+    _resolve_broadcast_profiles,
 )
 from app.bot.telegram.handlers.admin.group_topics import (
     _archive_media_in_group_topic,
@@ -111,6 +112,7 @@ __all__ = [
     "_delivery_content_keyboard",
     "_dispatch_broadcast_media",
     "_dispatch_broadcast_text",
+    "_resolve_broadcast_profiles",
     "_field_title",
     "_get_admin_broadcast_state",
     "_get_admin_orders_state",

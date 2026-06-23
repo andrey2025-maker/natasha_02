@@ -168,7 +168,8 @@ def register_menu_callbacks(router: Router, ctx: AdminContext) -> None:
             if menu_action == "broadcast":
                 await callback.answer()
                 await edit_panel_message(callback.message, text=
-                    "Выберите аудиторию для рассылки, затем отправьте текст или одно медиа с подписью.",
+                    "Выберите аудиторию для рассылки, затем отправьте текст или одно медиа с подписью.\n"
+                    "«По кодам» — сначала список кодов, затем сообщение только этим клиентам.",
                     reply_markup=_broadcast_keyboard(callback.from_user.id, callback_codec),
                 )
                 return

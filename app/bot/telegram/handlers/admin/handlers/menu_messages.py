@@ -199,7 +199,8 @@ def register_menu_messages(router: Router, ctx: AdminContext) -> None:
         if not await _ensure_admin(message):
             return
         await message.answer(
-            "Выберите аудиторию для рассылки, затем отправьте текст или одно медиа с подписью.",
+            "Выберите аудиторию для рассылки, затем отправьте текст или одно медиа с подписью.\n"
+            "«По кодам» — сначала список кодов, затем сообщение только этим клиентам.",
             reply_markup=_broadcast_keyboard(message.from_user.id, callback_codec),
         )
 

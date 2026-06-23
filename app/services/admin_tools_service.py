@@ -1373,6 +1373,17 @@ class BackupService:
             return [item for item in profiles if item.last_activity_at < month_ago]
         return []
 
+    async def pick_profiles_by_codes(self, codes: list[str]) -> list[UserProfile]:
+        profiles: list[UserProfile] = []
+        seen: set[int] = set()
+        for code in codes:
+            profile = await self.profile_repo.get_by_code(code)
+            if profile is None or profile.id in seen:
+                continue
+            seen.add(profile.id)
+            profiles.append(profile)
+        return profiles
+
     async def _all_profiles(self) -> list[UserProfile]:
         items: list[UserProfile] = []
         page = 1

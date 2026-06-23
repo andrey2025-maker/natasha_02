@@ -19,18 +19,24 @@ from app.core.container import AppContainer
 def _get_admin_broadcast_state(session) -> dict:
     block = session.state_data.get("_admin_broadcast")
     if isinstance(block, dict):
+        raw_codes = block.get("target_codes")
+        target_codes = [str(item) for item in raw_codes] if isinstance(raw_codes, list) else []
         return {
             "awaiting_payload": bool(block.get("awaiting_payload")),
+            "awaiting_codes": bool(block.get("awaiting_codes")),
             "audience": str(block.get("audience")) if block.get("audience") else None,
+            "target_codes": target_codes,
         }
-    return {"awaiting_payload": False, "audience": None}
+    return {"awaiting_payload": False, "awaiting_codes": False, "audience": None, "target_codes": []}
 
 
 async def _save_admin_broadcast_state(container: AppContainer, session, state: dict) -> None:
     payload = dict(session.state_data)
     payload["_admin_broadcast"] = {
         "awaiting_payload": bool(state.get("awaiting_payload")),
+        "awaiting_codes": bool(state.get("awaiting_codes")),
         "audience": state.get("audience"),
+        "target_codes": list(state.get("target_codes") or []),
     }
     session.state_data = payload
     await container.session_repo.save(session)
@@ -205,7 +211,9 @@ async def _save_admin_utils_state(container: AppContainer, session, state: dict)
 def admin_session_has_pending(session) -> bool:
     if admin_utils_has_waiter(_get_admin_utils_state(session)):
         return True
-    if _get_admin_broadcast_state(session).get("awaiting_payload"):
+    if _get_admin_broadcast_state(session).get("awaiting_payload") or _get_admin_broadcast_state(session).get(
+        "awaiting_codes"
+    ):
         return True
     orders_state = _get_admin_orders_state(session)
     if (
@@ -263,7 +271,12 @@ async def clear_admin_input_states(container: AppContainer, session) -> None:
         "awaiting_profile_edit_field": utils_state.get("awaiting_profile_edit_field"),
     }
 
-    payload["_admin_broadcast"] = {"awaiting_payload": False, "audience": None}
+    payload["_admin_broadcast"] = {
+        "awaiting_payload": False,
+        "awaiting_codes": False,
+        "audience": None,
+        "target_codes": [],
+    }
 
     orders_state = _get_admin_orders_state(session)
     orders_state["edit_order"] = None

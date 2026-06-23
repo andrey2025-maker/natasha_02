@@ -94,7 +94,7 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
         text = message.text.strip()
 
         has_utils = admin_utils_has_waiter(utils_state)
-        has_broadcast = bool(broadcast_state.get("awaiting_payload"))
+        has_broadcast = bool(broadcast_state.get("awaiting_payload") or broadcast_state.get("awaiting_codes"))
         has_orders_edit = bool(
             orders_state.get("edit_field")
             or orders_state.get("bulk_field")
@@ -552,31 +552,86 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
             )
             return
 
+        if broadcast_state.get("awaiting_codes"):
+            codes = parse_codes(message.text)
+            if not codes:
+                await message.answer("Не распознаны коды. Пример:\n001\n002\n016")
+                return
+            profiles = await backup_service.pick_profiles_by_codes(codes)
+            found_codes = {profile.code for profile in profiles}
+            missing = [code for code in codes if code not in found_codes]
+            broadcast_state["target_codes"] = codes
+            broadcast_state["awaiting_codes"] = False
+            broadcast_state["awaiting_payload"] = True
+            broadcast_state["audience"] = "codes"
+            await _save_admin_broadcast_state(container, session, broadcast_state)
+            tg_count = count_targets_for_platform(profiles, Platform.TELEGRAM)
+            vk_count = count_targets_for_platform(profiles, Platform.VK)
+            report = (
+                f"Коды приняты: {', '.join(codes)}\n"
+                f"Получатели: TG {tg_count}, VK {vk_count}"
+            )
+            if missing:
+                report += f"\nНе найдены: {', '.join(missing)}"
+            if not profiles:
+                await message.answer(
+                    report + "\n\nНет клиентов для рассылки. Проверьте коды и начните снова из раздела «Рассылка»."
+                )
+                broadcast_state["awaiting_payload"] = False
+                broadcast_state["audience"] = None
+                broadcast_state["target_codes"] = []
+                await _save_admin_broadcast_state(container, session, broadcast_state)
+                return
+            report += "\n\nТеперь отправьте текст рассылки одним сообщением."
+            await message.answer(report)
+            return
+
         if broadcast_state.get("awaiting_payload"):
             audience = str(broadcast_state.get("audience") or "")
             text = message.text.strip()
-            if audience not in {"all", "active", "inactive"}:
+            if audience not in {"all", "active", "inactive", "codes"}:
                 await message.answer("Сначала выберите аудиторию в разделе «Рассылка».")
+                return
+            if audience == "codes" and not broadcast_state.get("target_codes"):
+                await message.answer("Сначала укажите коды клиентов в разделе «Рассылка».")
                 return
             if not text:
                 await message.answer("Текст рассылки не может быть пустым.")
                 return
+            profiles = await _resolve_broadcast_profiles(
+                backup_service,
+                audience,
+                broadcast_state.get("target_codes"),
+            )
+            if not profiles:
+                await message.answer("Нет получателей для рассылки.")
+                broadcast_state["awaiting_payload"] = False
+                broadcast_state["awaiting_codes"] = False
+                broadcast_state["audience"] = None
+                broadcast_state["target_codes"] = []
+                await _save_admin_broadcast_state(container, session, broadcast_state)
+                return
             tg_sent, tg_failed, vk_enqueued = await _dispatch_broadcast_text(
                 message,
                 container=container,
-                backup_service=backup_service,
-                audience=audience,
+                profiles=profiles,
                 text=text,
             )
+            target_codes = list(broadcast_state.get("target_codes") or [])
             broadcast_state["awaiting_payload"] = False
+            broadcast_state["awaiting_codes"] = False
             broadcast_state["audience"] = None
+            broadcast_state["target_codes"] = []
             await _save_admin_broadcast_state(container, session, broadcast_state)
-            await message.answer(
+            result = (
                 "Рассылка поставлена в работу.\n"
                 f"TG отправлено: {tg_sent}\n"
                 f"TG ошибки: {tg_failed}\n"
                 f"VK в очередь: {vk_enqueued}"
             )
+            if audience == "codes":
+                result += f"\nКоды: {', '.join(target_codes)}"
+            await message.answer(result)
             return
 
         if message.text.lower().startswith("codes "):

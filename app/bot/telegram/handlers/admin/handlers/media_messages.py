@@ -233,22 +233,44 @@ def register_media_messages(router: Router, ctx: AdminContext) -> None:
         if not state.get("awaiting_payload"):
             raise SkipHandler
         audience = str(state.get("audience") or "")
-        if audience not in {"all", "active", "inactive"}:
+        if audience not in {"all", "active", "inactive", "codes"}:
             await message.answer("Сначала выберите аудиторию в разделе «Рассылка».")
+            return
+        if audience == "codes" and not state.get("target_codes"):
+            await message.answer("Сначала укажите коды клиентов в разделе «Рассылка».")
+            return
+
+        profiles = await _resolve_broadcast_profiles(
+            backup_service,
+            audience,
+            state.get("target_codes"),
+        )
+        if not profiles:
+            await message.answer("Нет получателей для рассылки.")
+            state["awaiting_payload"] = False
+            state["awaiting_codes"] = False
+            state["audience"] = None
+            state["target_codes"] = []
+            await _save_admin_broadcast_state(container, session, state)
             return
 
         tg_sent, tg_failed, vk_enqueued = await _dispatch_broadcast_media(
             message,
             container=container,
-            backup_service=backup_service,
-            audience=audience,
+            profiles=profiles,
         )
+        target_codes = list(state.get("target_codes") or [])
         state["awaiting_payload"] = False
+        state["awaiting_codes"] = False
         state["audience"] = None
+        state["target_codes"] = []
         await _save_admin_broadcast_state(container, session, state)
-        await message.answer(
+        result = (
             "Медиа-рассылка поставлена в работу.\n"
             f"TG отправлено: {tg_sent}\n"
             f"TG ошибки: {tg_failed}\n"
             f"VK в очередь (текст-пояснение): {vk_enqueued}"
         )
+        if audience == "codes":
+            result += f"\nКоды: {', '.join(target_codes)}"
+        await message.answer(result)

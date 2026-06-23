@@ -9,14 +9,22 @@ from app.domain.enums import Platform
 from app.domain.models import OutboundMessage, UserProfile
 from app.services.admin_tools_service import BackupService
 
+async def _resolve_broadcast_profiles(
+    backup_service: BackupService,
+    audience: str,
+    target_codes: list[str] | None = None,
+) -> list[UserProfile]:
+    if audience == "codes":
+        return await backup_service.pick_profiles_by_codes(list(target_codes or []))
+    return await backup_service.pick_profiles_for_broadcast(audience)
+
+
 async def _dispatch_broadcast_text(
     message: Message,
     container: AppContainer,
-    backup_service: BackupService,
-    audience: str,
+    profiles: list[UserProfile],
     text: str,
 ) -> tuple[int, int, int]:
-    profiles = await backup_service.pick_profiles_for_broadcast(audience)
     tg_sent = 0
     tg_failed = 0
     vk_enqueued = 0
@@ -45,10 +53,8 @@ async def _dispatch_broadcast_text(
 async def _dispatch_broadcast_media(
     message: Message,
     container: AppContainer,
-    backup_service: BackupService,
-    audience: str,
+    profiles: list[UserProfile],
 ) -> tuple[int, int, int]:
-    profiles = await backup_service.pick_profiles_for_broadcast(audience)
     caption = message.caption or ""
     media_kind = ""
     media_id = ""
@@ -136,6 +142,12 @@ def _broadcast_keyboard(user_id: int, codec: CallbackCodec) -> InlineKeyboardMar
                     text="Не активные",
                     callback_data=codec.encode("admin:broadcast:inactive", user_id),
                 ),
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text="По кодам",
+                    callback_data=codec.encode("admin:broadcast:codes", user_id),
+                ),
+            ],
         ]
     )

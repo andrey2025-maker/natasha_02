@@ -85,13 +85,34 @@ def register_broadcast_callbacks(router: Router, ctx: AdminContext) -> None:
 
         if action.startswith("admin:broadcast:"):
             audience = action.split(":")[-1]
-            if audience not in {"all", "active", "inactive"}:
+            if audience not in {"all", "active", "inactive", "codes"}:
                 await callback.answer("Неизвестная аудитория", show_alert=True)
                 return
             session = await container.profile_flow.get_or_create_session(Platform.TELEGRAM, callback.from_user.id)
             state = _get_admin_broadcast_state(session)
+            if audience == "codes":
+                state["awaiting_codes"] = True
+                state["awaiting_payload"] = False
+                state["audience"] = "codes"
+                state["target_codes"] = []
+                await _save_admin_broadcast_state(container, session, state)
+                await callback.answer()
+                await edit_panel_message(
+                    callback.message,
+                    text=fsm_prompt(
+                        "Перечислите коды клиентов — по одному на строку или через запятую.\n"
+                        "Пример:\n"
+                        "001\n"
+                        "002\n"
+                        "016"
+                    ),
+                )
+                return
+
+            state["awaiting_codes"] = False
             state["awaiting_payload"] = True
             state["audience"] = audience
+            state["target_codes"] = []
             await _save_admin_broadcast_state(container, session, state)
             profiles = await backup_service.pick_profiles_for_broadcast(audience)
             tg_count = count_targets_for_platform(profiles, Platform.TELEGRAM)
