@@ -225,12 +225,26 @@ async def _send_section(
     path_text = await container.faq_service.breadcrumbs(section_id)
 
     body_lines = [f"<b>{escape(path_text, quote=False)}</b>"]
-    if current and current.content_text:
+    media_items: list[dict] = []
+    if section_id is None:
+        intro_store = StaticContentStore(
+            database_dsn=container.settings.database.dsn,
+            key="faq_intro",
+            default_text="",
+        )
+        intro_text = (await intro_store.get_text()).strip()
+        if intro_text:
+            body_lines.append(intro_text)
+        media_items = await intro_store.get_media_items()
+    elif current and current.content_text:
         body_lines.append(current.content_text.strip())
+
     if children:
         body_lines.append("")
         body_lines.append("Выберите раздел:")
-    elif not current or not current.content_text:
+    elif section_id is None and not media_items and (len(body_lines) == 1):
+        body_lines.append("Раздел пока пуст.")
+    elif section_id is not None and (not current or not current.content_text) and not children:
         body_lines.append("Раздел пока пуст.")
 
     parent_id = current.parent_id if current else None
@@ -243,8 +257,7 @@ async def _send_section(
     )
     text = "\n".join(body_lines)
 
-    media_items: list[dict] = []
-    if section_id is not None:
+    if not media_items and section_id is not None:
         media_items = await faq_media_store.get_media_items(section_id)
 
     if media_items:

@@ -9,7 +9,9 @@ from app.bot.telegram.callbacks import CallbackCodec
 from app.bot.telegram.callback_panel import edit_panel_message
 from app.bot.telegram.message_html import extract_message_html
 from app.core.container import AppContainer
-from app.services.admin_tools_service import FaqMediaStore
+from app.services.admin_tools_service import FaqMediaStore, StaticContentStore
+
+FAQ_ROOT_SECTION_ID = 0
 
 SCREEN_BROWSE = "browse"
 SCREEN_EDIT_MENU = "edit_menu"
@@ -31,6 +33,18 @@ FAQ_ADMIN_STATE_KEYS = (
     "faq_admin_panel_message_id",
     "awaiting_faq_media_section_id",
 )
+
+
+def faq_intro_store(container: AppContainer) -> StaticContentStore:
+    return StaticContentStore(
+        database_dsn=container.settings.database.dsn,
+        key="faq_intro",
+        default_text="",
+    )
+
+
+def is_faq_root_section(section_id: int) -> bool:
+    return int(section_id) == FAQ_ROOT_SECTION_ID
 
 
 def faq_admin_has_waiter(utils_state: dict) -> bool:
@@ -284,6 +298,22 @@ async def handle_faq_admin_callback(
         )
         return True
 
+    if suffix.startswith("content:open:"):
+        section_id = int(suffix.split(":", maxsplit=2)[2])
+        utils_state["faq_admin_screen"] = SCREEN_CONTENT
+        utils_state["faq_admin_target_section_id"] = section_id
+        utils_state["awaiting_faq_media_section_id"] = None
+        await callback.answer()
+        await refresh_faq_admin_panel(
+            message=callback.message,
+            container=container,
+            codec=codec,
+            user_id=user_id,
+            utils_state=utils_state,
+            faq_media_store=faq_media_store,
+        )
+        return True
+
     if suffix.startswith("content:text:"):
         section_id = int(suffix.split(":", maxsplit=2)[2])
         utils_state["faq_admin_screen"] = SCREEN_EDIT_TEXT
@@ -333,7 +363,10 @@ async def handle_faq_admin_callback(
 
     if suffix.startswith("content:clear:"):
         section_id = int(suffix.split(":", maxsplit=2)[2])
-        await faq_media_store.clear_media(section_id)
+        if is_faq_root_section(section_id):
+            await faq_intro_store(container).clear_media()
+        else:
+            await faq_media_store.clear_media(section_id)
         utils_state["faq_admin_screen"] = SCREEN_CONTENT
         utils_state["faq_admin_target_section_id"] = section_id
         await callback.answer("Медиа очищено")
@@ -487,6 +520,19 @@ async def try_handle_faq_admin_text(
             await message.answer("Текст не может быть пустым.")
             return True
         section_id = int(utils_state.get("faq_admin_target_section_id") or 0)
+        if is_faq_root_section(section_id):
+            await faq_intro_store(container).save_text(html_text)
+            utils_state["faq_admin_screen"] = SCREEN_CONTENT
+            await refresh_faq_admin_panel(
+                message=message,
+                container=container,
+                codec=codec,
+                user_id=user_id,
+                utils_state=utils_state,
+                faq_media_store=faq_media_store,
+            )
+            await message.answer("Вступление обновлено.")
+            return True
         updated = await container.faq_service.update_section_text(section_id, html_text)
         if not updated:
             await message.answer("Раздел не найден.")
@@ -653,8 +699,11 @@ async def _build_panel(
 
     if screen == SCREEN_EDIT_TEXT:
         section_id = int(utils_state.get("faq_admin_target_section_id") or 0)
-        section = await container.faq_service.get_section(section_id)
-        title = section.title if section else "?"
+        if is_faq_root_section(section_id):
+            title = "Вступление (первый экран «Вопросы»)"
+        else:
+            section = await container.faq_service.get_section(section_id)
+            title = section.title if section else "?"
         text = (
             "📚 <b>Редактирование текста</b>\n\n"
             f"Раздел: <b>{escape(title, quote=False)}</b>\n\n"
@@ -670,9 +719,13 @@ async def _build_panel(
 
     if screen == SCREEN_EDIT_MEDIA:
         section_id = int(utils_state.get("faq_admin_target_section_id") or 0)
-        section = await container.faq_service.get_section(section_id)
-        media_count = len(await faq_media_store.get_media_items(section_id))
-        title = section.title if section else "?"
+        if is_faq_root_section(section_id):
+            title = "Вступление (первый экран «Вопросы»)"
+            media_count = len(await faq_intro_store(container).get_media_items())
+        else:
+            section = await container.faq_service.get_section(section_id)
+            title = section.title if section else "?"
+            media_count = len(await faq_media_store.get_media_items(section_id))
         text = (
             "📚 <b>Добавление медиа</b>\n\n"
             f"Раздел: <b>{escape(title, quote=False)}</b>\n"
@@ -715,6 +768,38 @@ async def _build_panel(
 
     if screen == SCREEN_CONTENT:
         section_id = int(utils_state.get("faq_admin_target_section_id") or 0)
+        if is_faq_root_section(section_id):
+            intro = faq_intro_store(container)
+            body = (await intro.get_text()).strip() or "—"
+            media_items = await intro.get_media_items()
+            path = "Вопросы / Вступление"
+            content_rows = [
+                [
+                    InlineKeyboardButton(
+                        text="Ред. текст",
+                        callback_data=_encode(codec, user_id, f"content:text:{section_id}"),
+                    ),
+                    InlineKeyboardButton(
+                        text="Доб. медиа",
+                        callback_data=_encode(codec, user_id, f"content:media:{section_id}"),
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="Очистить медиа",
+                        callback_data=_encode(codec, user_id, f"content:clear:{section_id}"),
+                    ),
+                ],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data=_encode(codec, user_id, "back"))],
+            ]
+            text = (
+                f"📚 <b>Контент раздела</b>\n"
+                f"{escape(path, quote=False)}\n\n"
+                f"<b>Текст:</b>\n{escape(body, quote=False)}\n\n"
+                f"<b>Медиа:</b> {len(media_items)}"
+            )
+            return text, InlineKeyboardMarkup(inline_keyboard=content_rows)
+
         section = await container.faq_service.get_section(section_id)
         if not section:
             text = "Раздел не найден."
@@ -819,6 +904,26 @@ async def _build_browse_panel(
             InlineKeyboardButton(text="Ред.", callback_data=_encode(codec, user_id, "edit")),
         ]
     )
+    if nav_section_id is None:
+        rows.insert(
+            -1,
+            [
+                InlineKeyboardButton(
+                    text="📄 Вступление",
+                    callback_data=_encode(codec, user_id, f"content:open:{FAQ_ROOT_SECTION_ID}"),
+                )
+            ],
+        )
+    else:
+        rows.insert(
+            -1,
+            [
+                InlineKeyboardButton(
+                    text="📄 Контент раздела",
+                    callback_data=_encode(codec, user_id, f"content:open:{nav_section_id}"),
+                )
+            ],
+        )
     if nav_section_id is not None:
         section = await container.faq_service.get_section(nav_section_id)
         parent_token = _section_token(section.parent_id if section else None)
@@ -829,7 +934,13 @@ async def _build_browse_panel(
 
 
 def _edit_menu_panel(codec: CallbackCodec, user_id: int) -> tuple[str, InlineKeyboardMarkup]:
-    text = "📚 <b>Редактирование FAQ</b>\n\nВыберите, что редактировать:"
+    text = (
+        "📚 <b>Редактирование FAQ</b>\n\n"
+        "Выберите, что редактировать:\n"
+        "• <b>Разделы</b> — названия кнопок\n"
+        "• <b>Текст</b> — текст и медиа внутри разделов\n\n"
+        "На главном экране FAQ также есть кнопка «📄 Вступление»."
+    )
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -862,6 +973,17 @@ async def _build_pick_panel(
         "",
     ]
     rows: list[list[InlineKeyboardButton]] = []
+    if pick_kind == "content" and pick_nav is None:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="✅ Вступление",
+                    callback_data=_encode(codec, user_id, f"pick:content:select:{FAQ_ROOT_SECTION_ID}"),
+                )
+            ]
+        )
+        lines.append("Вступление — текст и медиа на первом экране «Вопросы».")
+        lines.append("")
     if pick_nav is not None:
         section = await container.faq_service.get_section(pick_nav)
         if section:
