@@ -29,10 +29,9 @@ from app.bot.telegram.handlers.content_utils_admin import (
     try_handle_content_utils_submission,
 )
 from app.bot.telegram.handlers.faq_admin import (
+    FAQ_ROOT_SECTION_ID,
     SCREEN_CONTENT,
     SCREEN_EDIT_MEDIA,
-    faq_intro_store,
-    is_faq_root_section,
     refresh_faq_admin_panel,
 )
 from app.bot.telegram.message_html import extract_caption_html
@@ -176,7 +175,7 @@ def register_media_messages(router: Router, ctx: AdminContext) -> None:
                 suffix = " и синхронизировано в VK." if vk_attachment else ". VK синхронизация не выполнена."
                 await message.answer("Медиа доставки добавлено" + suffix + " Отправьте ещё или «Готово медиа».")
             return
-        if utils_state.get("awaiting_faq_media_section_id"):
+        if utils_state.get("awaiting_faq_media_section_id") is not None:
             section_id = int(utils_state.get("awaiting_faq_media_section_id"))
             media_type = ""
             file_id = ""
@@ -204,27 +203,16 @@ def register_media_messages(router: Router, ctx: AdminContext) -> None:
                     media_type=media_type,
                     file_id=file_id,
                 )
-                if is_faq_root_section(section_id):
-                    await faq_intro_store(container).save_media(
-                        media_type=media_type,
-                        file_id=file_id,
-                        caption=extract_caption_html(message),
-                        vk_attachment=vk_attachment,
-                        storage_chat_id=archive_chat_id,
-                        storage_topic_id=archive_topic_id,
-                        storage_message_id=archive_message_id,
-                    )
-                else:
-                    await faq_media_store.save_media(
-                        section_id=int(section_id),
-                        media_type=media_type,
-                        file_id=file_id,
-                        caption=extract_caption_html(message),
-                        vk_attachment=vk_attachment,
-                        storage_chat_id=archive_chat_id,
-                        storage_topic_id=archive_topic_id,
-                        storage_message_id=archive_message_id,
-                    )
+                await faq_media_store.save_media(
+                    section_id=int(section_id),
+                    media_type=media_type,
+                    file_id=file_id,
+                    caption=extract_caption_html(message),
+                    vk_attachment=vk_attachment,
+                    storage_chat_id=archive_chat_id,
+                    storage_topic_id=archive_topic_id,
+                    storage_message_id=archive_message_id,
+                )
                 await _save_admin_utils_state(container, session, utils_state)
                 if str(utils_state.get("faq_admin_screen") or "") == SCREEN_EDIT_MEDIA:
                     await refresh_faq_admin_panel(
@@ -237,8 +225,9 @@ def register_media_messages(router: Router, ctx: AdminContext) -> None:
                     )
                 else:
                     suffix = " и синхронизировано в VK." if vk_attachment else ". VK синхронизация не выполнена."
+                    label = "вступление" if section_id == FAQ_ROOT_SECTION_ID else f"раздел {section_id}"
                     await message.answer(
-                        f"FAQ медиа (раздел {section_id}) добавлено{suffix} Отправьте ещё или «Готово медиа»."
+                        f"FAQ медиа ({label}) добавлено{suffix} Отправьте ещё или «Готово медиа»."
                     )
             return
 

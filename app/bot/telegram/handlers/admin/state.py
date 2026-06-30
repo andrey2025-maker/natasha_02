@@ -65,7 +65,7 @@ def _get_admin_utils_state(session) -> dict:
             "awaiting_codes_remove": bool(block.get("awaiting_codes_remove")),
             "awaiting_faq_media_section_id": (
                 int(block.get("awaiting_faq_media_section_id"))
-                if block.get("awaiting_faq_media_section_id")
+                if block.get("awaiting_faq_media_section_id") is not None
                 else None
             ),
             "faq_admin_screen": str(block.get("faq_admin_screen")) if block.get("faq_admin_screen") else None,

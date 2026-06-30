@@ -91,7 +91,7 @@ def admin_utils_has_waiter(utils_state: dict) -> bool:
     )
     if any(utils_state.get(flag) for flag in waiter_flags):
         return True
-    if utils_state.get("awaiting_faq_media_section_id"):
+    if utils_state.get("awaiting_faq_media_section_id") is not None:
         return True
     if utils_state.get("faq_admin_screen") in {"add_title", "rename_title", "edit_text"}:
         return True

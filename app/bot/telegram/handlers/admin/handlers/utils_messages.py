@@ -441,13 +441,13 @@ def register_utils_messages(router: Router, ctx: AdminContext) -> None:
             [
                 state.get("awaiting_payment_media"),
                 state.get("awaiting_delivery_media"),
-                state.get("awaiting_faq_media_section_id"),
+                state.get("awaiting_faq_media_section_id") is not None,
             ]
         ):
             await message.answer("Режим добавления медиа сейчас не активен.")
             return
         if (
-            state.get("awaiting_faq_media_section_id")
+            state.get("awaiting_faq_media_section_id") is not None
             and str(state.get("faq_admin_screen") or "") == SCREEN_EDIT_MEDIA
         ):
             section_id = int(state["awaiting_faq_media_section_id"])

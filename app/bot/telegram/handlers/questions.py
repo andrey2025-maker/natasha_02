@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from app.bot.telegram.callbacks import CallbackAuthError, CallbackCodec
 from app.bot.telegram.callback_panel import edit_content_with_media, edit_panel_message, message_has_media
+from app.bot.telegram.handlers.faq_admin import FAQ_ROOT_SECTION_ID
 from app.bot.telegram.bot_api import api_copy_message, api_send_message
 from app.bot.telegram.mirror_bot import skip_dialog_mirror
 from app.core.container import AppContainer
@@ -235,7 +236,9 @@ async def _send_section(
         intro_text = (await intro_store.get_text()).strip()
         if intro_text:
             body_lines.append(intro_text)
-        media_items = await intro_store.get_media_items()
+        media_items = await faq_media_store.get_media_items(FAQ_ROOT_SECTION_ID)
+        if not media_items:
+            media_items = await intro_store.get_media_items()
     elif current and current.content_text:
         body_lines.append(current.content_text.strip())
 

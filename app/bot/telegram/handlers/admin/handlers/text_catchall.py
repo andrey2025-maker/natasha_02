@@ -223,7 +223,7 @@ def register_text_catchall(router: Router, ctx: AdminContext) -> None:
                 )
             return
 
-        if utils_state.get("awaiting_faq_media_section_id"):
+        if utils_state.get("awaiting_faq_media_section_id") is not None:
             if str(utils_state.get("faq_admin_screen") or "") == SCREEN_EDIT_MEDIA:
                 await message.answer(
                     "Сейчас ожидается медиа. Отправьте фото, видео или GIF, "

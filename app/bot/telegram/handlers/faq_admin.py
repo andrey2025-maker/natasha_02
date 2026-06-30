@@ -51,7 +51,7 @@ def faq_admin_has_waiter(utils_state: dict) -> bool:
     screen = str(utils_state.get("faq_admin_screen") or "")
     if screen in {SCREEN_ADD_TITLE, SCREEN_RENAME_TITLE, SCREEN_EDIT_TEXT}:
         return True
-    if utils_state.get("awaiting_faq_media_section_id"):
+    if utils_state.get("awaiting_faq_media_section_id") is not None:
         return True
     return False
 
@@ -363,10 +363,7 @@ async def handle_faq_admin_callback(
 
     if suffix.startswith("content:clear:"):
         section_id = int(suffix.split(":", maxsplit=2)[2])
-        if is_faq_root_section(section_id):
-            await faq_intro_store(container).clear_media()
-        else:
-            await faq_media_store.clear_media(section_id)
+        await faq_media_store.clear_media(section_id)
         utils_state["faq_admin_screen"] = SCREEN_CONTENT
         utils_state["faq_admin_target_section_id"] = section_id
         await callback.answer("Медиа очищено")
@@ -721,11 +718,10 @@ async def _build_panel(
         section_id = int(utils_state.get("faq_admin_target_section_id") or 0)
         if is_faq_root_section(section_id):
             title = "Вступление (первый экран «Вопросы»)"
-            media_count = len(await faq_intro_store(container).get_media_items())
         else:
             section = await container.faq_service.get_section(section_id)
             title = section.title if section else "?"
-            media_count = len(await faq_media_store.get_media_items(section_id))
+        media_count = len(await faq_media_store.get_media_items(section_id))
         text = (
             "📚 <b>Добавление медиа</b>\n\n"
             f"Раздел: <b>{escape(title, quote=False)}</b>\n"
@@ -771,7 +767,7 @@ async def _build_panel(
         if is_faq_root_section(section_id):
             intro = faq_intro_store(container)
             body = (await intro.get_text()).strip() or "—"
-            media_items = await intro.get_media_items()
+            media_items = await faq_media_store.get_media_items(section_id)
             path = "Вопросы / Вступление"
             content_rows = [
                 [
